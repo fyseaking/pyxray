@@ -26,7 +26,7 @@ python3() {
   if [ "${PYXRAY_OFF:-0}" = "1" ] || [ $# -eq 0 ]; then
     command "$_PYXRAY_PYTHON" "$@"
   else
-    command "$_PYXRAY_PYTHON" -m pyxray.intercept -- "$_PYXRAY_PYTHON" "$@"
+    command "$_PYXRAY_PYTHON" -m pyxray_agent.intercept -- "$_PYXRAY_PYTHON" "$@"
   fi
 }
 

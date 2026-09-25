@@ -14,8 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pyxray  # noqa: E402
-from pyxray import intercept  # noqa: E402
+import pyxray_agent as pyxray  # noqa: E402
+from pyxray_agent import intercept  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON_DIR = ROOT / "python"
@@ -137,7 +137,7 @@ def test_payload_classification():
 def _hook(payload: dict, **env: str) -> subprocess.CompletedProcess:
     full = {**os.environ, "PYTHONPATH": str(PYTHON_DIR), "PYXRAY_DRAW": "never", **env}
     return subprocess.run(
-        [sys.executable, "-m", "pyxray.intercept", "--hook"],
+        [sys.executable, "-m", "pyxray_agent.intercept", "--hook"],
         input=json.dumps(payload), capture_output=True, text=True, env=full,
     )
 
@@ -168,10 +168,10 @@ def test_hook_is_silent_when_not_gated_and_on_garbage():
         assert proc.returncode == 0 and proc.stdout == "", (proc.stdout, proc.stderr)
         assert len(pyxray.feed(log)) == 1
     full = {**os.environ, "PYTHONPATH": str(PYTHON_DIR)}
-    proc = subprocess.run([sys.executable, "-m", "pyxray.intercept", "--hook"],
+    proc = subprocess.run([sys.executable, "-m", "pyxray_agent.intercept", "--hook"],
                           input="not json", capture_output=True, text=True, env=full)
     assert proc.returncode == 0 and proc.stdout == ""
-    proc = subprocess.run([sys.executable, "-m", "pyxray.intercept", "--hook"],
+    proc = subprocess.run([sys.executable, "-m", "pyxray_agent.intercept", "--hook"],
                           input="[1, 2, 3]", capture_output=True, text=True, env=full)
     assert proc.returncode == 0 and proc.stdout == ""
 
@@ -192,7 +192,7 @@ def test_hook_with_a_broken_engine_still_exits_zero():
 def test_wrapper_with_a_broken_engine_still_runs_the_command():
     env = {**os.environ, "PYTHONPATH": str(PYTHON_DIR), "PYXRAY_DRAW": "never", **BROKEN}
     proc = subprocess.run(
-        [sys.executable, "-m", "pyxray.intercept", "--", sys.executable, "-c", "print('ran')"],
+        [sys.executable, "-m", "pyxray_agent.intercept", "--", sys.executable, "-c", "print('ran')"],
         capture_output=True, text=True, env=env,
     )
     assert proc.returncode == 0, proc.stderr
@@ -203,7 +203,7 @@ def test_wrapper_replays_stdin_scripts():
     env = {**os.environ, "PYTHONPATH": str(PYTHON_DIR), "PYXRAY_DRAW": "never",
            "PYXRAY_GATE": "off"}
     proc = subprocess.run(
-        [sys.executable, "-m", "pyxray.intercept", "--", sys.executable, "-"],
+        [sys.executable, "-m", "pyxray_agent.intercept", "--", sys.executable, "-"],
         input="print('from stdin')\n", capture_output=True, text=True, env=env,
     )
     assert proc.returncode == 0, proc.stderr
@@ -213,7 +213,7 @@ def test_wrapper_replays_stdin_scripts():
 def test_look_never_raises():
     with _Env(PYXRAY_DRAW="never", **BROKEN):
         # A fresh interpreter is needed for the engine cache to be empty.
-        code = ("from pyxray.intercept import look\n"
+        code = ("from pyxray_agent.intercept import look\n"
                 "e = look('import os', 'x')\n"
                 "print(e['band'], 'error' in e)\n")
         proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,

@@ -11,7 +11,7 @@ Flow for one tool call:
                                     └── remember() ─▶ transform_tool_result appends
                                                        format_block() to the result
 
-The feed row is written by ``pyxray.intercept.look`` (the same call the
+The feed row is written by ``pyxray_agent.intercept.look`` (the same call the
 Claude Code hook and the shim make), so ``pyx watch`` and the desktop pane
 see Hermes' snippets alongside everyone else's.
 """
@@ -53,7 +53,7 @@ _TRUTHY = {"1", "true", "yes", "on"}
 
 
 class EngineMissing(RuntimeError):
-    """No pyxray package (and no engine behind it) could be found."""
+    """No pyxray_agent package (and no engine behind it) could be found."""
 
 
 _pyxray: Any = None
@@ -88,23 +88,23 @@ def pyxray_module() -> Any:
         if _pyxray is not None:
             return _pyxray
         try:
-            import pyxray  # type: ignore[import-not-found]
+            import pyxray_agent as pyxray  # type: ignore[import-not-found]
         except ImportError:
             pyxray = None
             for root in _checkout_roots():
-                pkg = root / "python" / "pyxray" / "__init__.py"
+                pkg = root / "python" / "pyxray_agent" / "__init__.py"
                 if pkg.is_file():
                     sys.path.insert(0, str(pkg.parent.parent))
                     try:
-                        import pyxray  # type: ignore[import-not-found]  # noqa: F811
+                        import pyxray_agent as pyxray  # type: ignore[import-not-found]  # noqa: F811
                     except ImportError:
                         sys.path.pop(0)
                         continue
                     break
         if pyxray is None:
             _pyxray_error = (
-                "the pyxray package is not importable from Hermes' Python — "
-                "`pip install pyxray` into it, or set PYXRAY_ROOT to a checkout"
+                "the pyxray_agent package is not importable from Hermes' Python — "
+                "`pip install pyxray-agent` into it, or set PYXRAY_ROOT to a checkout"
             )
             raise EngineMissing(_pyxray_error)
         try:
@@ -302,7 +302,7 @@ def _payload_for(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
 def scan(tool_name: str, args: Any, settings: Settings, *, session: str = "") -> Findings:
     """Find and analyse every piece of Python a tool call would run.
 
-    Writes one feed row per snippet (through ``pyxray.intercept.look``) and
+    Writes one feed row per snippet (through ``pyxray_agent.intercept.look``) and
     returns the events. Never raises: a missing engine or a broken payload
     gives an empty ``Findings`` with ``error`` set.
     """
@@ -313,7 +313,7 @@ def scan(tool_name: str, args: Any, settings: Settings, *, session: str = "") ->
         return found
     try:
         pyxray_module()
-        from pyxray import intercept  # type: ignore[import-not-found]
+        from pyxray_agent import intercept  # type: ignore[import-not-found]
     except EngineMissing as exc:
         found.error = str(exc)
         return found

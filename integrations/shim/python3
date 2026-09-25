@@ -8,7 +8,7 @@
 # execvp, not by a shell that read your rc file.
 #
 # Install with integrations/shim/install.sh, or by hand: put this directory
-# early on PATH and make sure the pyxray package is importable (pip install,
+# early on PATH and make sure the pyxray_agent package is importable (pip install,
 # or PYTHONPATH pointing at a checkout's python/ directory).
 #
 # PYXRAY_OFF=1 makes this a no-op passthrough. Whatever happens, the user's
@@ -61,7 +61,7 @@ exec "$real" -c '
 import os, sys
 real = sys.argv[1]
 try:
-    from pyxray.intercept import main
+    from pyxray_agent.intercept import main
 except Exception:
     os.execv(real, [real] + sys.argv[2:])
 raise SystemExit(main(["--", real] + sys.argv[2:]))

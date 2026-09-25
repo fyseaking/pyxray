@@ -13,7 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pyxray
+import pyxray_agent as pyxray
 
 SKETCHY = """
 import os, shutil, subprocess
@@ -71,7 +71,7 @@ def test_extract_has_one_implementation():
         ("cd /tmp && env FOO=1 python3 -c 'print(5)' && echo done", "print(5)"),
         ("print('bare')\n", "print('bare')\n"),
     ]
-    from pyxray.heredoc import extract_python  # the deprecated forwarder
+    from pyxray_agent.heredoc import extract_python  # the deprecated forwarder
 
     for command, expected in cases:
         assert pyxray.extract(command)[0] == expected, command
@@ -85,7 +85,7 @@ def test_interceptor_gate_refuses_and_reports_why():
     script.write_bytes(b"import shutil\nshutil.rmtree('/tmp/nope')\n")
     try:
         proc = subprocess.run(
-            [sys.executable, "-m", "pyxray.intercept", "--", sys.executable, str(script)],
+            [sys.executable, "-m", "pyxray_agent.intercept", "--", sys.executable, str(script)],
             capture_output=True, text=True, env=env,
         )
         assert proc.returncode == 3, proc.stderr
@@ -98,7 +98,7 @@ def test_interceptor_runs_harmless_code():
     env = {**os.environ, "PYXRAY_GATE": "50", "PYXRAY_WIDTH": "80",
            "PYTHONPATH": str(Path(__file__).resolve().parents[1])}
     proc = subprocess.run(
-        [sys.executable, "-m", "pyxray.intercept", "--",
+        [sys.executable, "-m", "pyxray_agent.intercept", "--",
          sys.executable, "-c", "print('ran')"],
         capture_output=True, text=True, env=env,
     )
@@ -113,7 +113,7 @@ def test_hook_finds_python_in_every_harness_shape():
     Hermes says "terminal", and a matcher that cares about the capital B
     ignores every payload silently — the worst failure an observer can have.
     """
-    from pyxray.intercept import python_in_payload
+    from pyxray_agent.intercept import python_in_payload
 
     cases = [
         # Claude Code: capitalised tool, heredoc inside a shell command.
@@ -139,7 +139,7 @@ def test_hook_finds_python_in_every_harness_shape():
 
 
 def test_hook_ignores_things_that_are_not_python():
-    from pyxray.intercept import python_in_payload
+    from pyxray_agent.intercept import python_in_payload
 
     for payload in [
         {"tool_name": "Bash", "tool_input": {"command": "git status"}},
@@ -159,7 +159,7 @@ def test_hook_ignores_things_that_are_not_python():
 def test_gate_off_is_the_default_and_zero_is_not_off():
     import os
 
-    from pyxray.intercept import gate
+    from pyxray_agent.intercept import gate
 
     saved = os.environ.pop("PYXRAY_GATE", None)
     try:
@@ -190,7 +190,7 @@ def test_the_feed_records_without_drawing():
         os.environ["PYXRAY_LOG"] = log
         os.environ["PYXRAY_DRAW"] = "never"
         try:
-            from pyxray.intercept import look
+            from pyxray_agent.intercept import look
 
             event = look(SKETCHY, "sketchy.py", source="test")
             assert event["risk"] > 60

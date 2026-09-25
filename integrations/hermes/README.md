@@ -23,11 +23,11 @@ or, from a checkout, copy (or symlink) `integrations/hermes` to
 `~/.hermes/plugins/pyxray` and add `pyxray` to `plugins.enabled` in
 `~/.hermes/config.yaml`. On Windows that is `%USERPROFILE%\.hermes\plugins\pyxray`.
 
-The plugin needs the `pyxray` Python package to be importable by Hermes'
-Python, found in this order:
+The plugin needs the `pyxray_agent` Python package to be importable by
+Hermes' Python, found in this order:
 
-1. `import pyxray` (`pip install pyxray` into Hermes' venv, or `uv pip install`
-   from `~/.hermes`);
+1. `import pyxray_agent` (`pip install pyxray-agent` into Hermes' venv, or
+   `uv pip install pyxray-agent` from `~/.hermes`);
 2. `PYXRAY_ROOT` — a checkout, whose `python/` directory is used directly
    (with the `pyx` binary from `cargo build --release` next to it, or on `PATH`);
 3. the checkout this plugin directory sits inside.

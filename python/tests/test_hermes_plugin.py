@@ -21,7 +21,7 @@ PLUGIN_DIR = ROOT / "integrations" / "hermes"
 
 sys.path.insert(0, str(ROOT / "python"))
 
-import pyxray  # noqa: E402
+import pyxray_agent as pyxray  # noqa: E402
 
 
 def _load_plugin() -> Any:

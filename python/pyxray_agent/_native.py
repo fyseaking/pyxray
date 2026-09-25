@@ -2,7 +2,7 @@
 
 Prefers the compiled extension that ships beside this file. Falls back to the
 ``pyx`` binary — on ``PATH``, at ``$PYXRAY_BIN``, bundled into the wheel under
-``pyxray/bin/``, or in a checkout's ``target/`` — so a clone with a built CLI
+``pyxray_agent/bin/``, or in a checkout's ``target/`` — so a clone with a built CLI
 but no built extension still works, which is the common case when someone has
 just run ``cargo build``.
 
@@ -285,7 +285,7 @@ def engine() -> Engine:
         _cached = _Binary(exe)
         return _cached
     raise EngineError(
-        "no pyxray engine found — pip install pyxray, or build one with "
+        "no pyxray engine found — pip install pyxray-agent, or build one with "
         "`cargo build --release` (then `make install-ext`), or set PYXRAY_BIN "
         "to a pyx binary"
     )

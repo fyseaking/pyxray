@@ -17,11 +17,11 @@ ifeq ($(findstring MINGW,$(UNAME_S))$(findstring MSYS,$(UNAME_S))$(findstring Wi
   else
     EXT_SRC := target/release/lib_pyxray.so
   endif
-  EXT_DST := python/pyxray/_pyxray.abi3.so
+  EXT_DST := python/pyxray_agent/_pyxray.abi3.so
   PYX := target/release/pyx
 else
   EXT_SRC := target/release/_pyxray.dll
-  EXT_DST := python/pyxray/_pyxray.pyd
+  EXT_DST := python/pyxray_agent/_pyxray.pyd
   PYX := target/release/pyx.exe
 endif
 
@@ -110,4 +110,4 @@ audit: build
 
 clean:
 	$(CARGO) clean
-	rm -rf build dist python/pyxray/_pyxray*.so python/pyxray/_pyxray*.pyd python/pyxray/bin
+	rm -rf build dist python/pyxray_agent/_pyxray*.so python/pyxray_agent/_pyxray*.pyd python/pyxray_agent/bin

@@ -3,7 +3,7 @@
 # points at.
 #
 # Reads a PreToolUse-shaped JSON payload on stdin, hands it to
-# hooks/pyxray_hook.py under whichever Python can import pyxray, and writes a
+# hooks/pyxray_hook.py under whichever Python can import pyxray_agent, and writes a
 # block decision on stdout only if a gate is configured. Otherwise it prints
 # nothing. It always exits 0: a hook that fails would block the tool call,
 # and an observer that breaks somebody's work is worse than no observer.
@@ -11,7 +11,7 @@
 # Where pyxray comes from, in order:
 #   $PYXRAY_ROOT      a checkout (its python/ directory is put on the path)
 #   a checkout this plugin directory sits inside (integrations/claude-code)
-#   wherever `pip install pyxray` put it
+#   wherever `pip install pyxray-agent` put it
 #
 # $PYXRAY_PYTHON names the interpreter to use; otherwise python3, python and
 # the Windows `py -3` launcher are tried in turn. PYXRAY_DEBUG=1 keeps stderr.

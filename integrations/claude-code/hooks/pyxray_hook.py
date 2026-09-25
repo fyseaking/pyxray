@@ -9,7 +9,7 @@ import sys
 
 
 def _add_checkout(root):
-    package = os.path.join(root, "python", "pyxray", "__init__.py")
+    package = os.path.join(root, "python", "pyxray_agent", "__init__.py")
     if not os.path.isfile(package):
         return False
     sys.path.insert(0, os.path.join(root, "python"))
@@ -32,7 +32,7 @@ def main():
         # hooks/ -> claude-code/ -> integrations/ -> the checkout
         _add_checkout(os.path.normpath(os.path.join(here, "..", "..", "..")))
     try:
-        from pyxray.intercept import main as intercept
+        from pyxray_agent.intercept import main as intercept
     except ImportError:
         return 75
     try:

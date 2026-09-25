@@ -11,7 +11,7 @@ it — a tool that takes code directly, or a shell command carrying a script
 path, a heredoc, a `-c` one-liner, a `bash -c`, a pipe — appends a row to the
 feed for each, and writes a block decision on stdout **only** if
 `PYXRAY_GATE` is set. Ungated it prints nothing. It finds pyxray on its own
-(`PYXRAY_ROOT`, the checkout it sits in, or `pip install pyxray`), tries
+(`PYXRAY_ROOT`, the checkout it sits in, or `pip install pyxray-agent`), tries
 `python3`, `python` and `py -3` until one can import it, and always exits 0 —
 a hook that errors blocks the tool call, and an observer that breaks somebody
 else's work is worse than no observer. `PYXRAY_DEBUG=1` reports what it

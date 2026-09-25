@@ -18,8 +18,8 @@ keywords = ["python", "static-analysis", "security", "tui", "llm"]
 categories = ["command-line-utilities", "development-tools", "visualization"]
 
 [workspace.dependencies]
-pyxray-core = { path = "crates/pyxray-core" }
-pyxray-render = { path = "crates/pyxray-render" }
+pyxray-core = { path = "crates/pyxray-core", version = "0.1.0" }
+pyxray-render = { path = "crates/pyxray-render", version = "0.1.0" }
 ruff_python_parser = "0.0.12"
 ruff_python_ast = "0.0.12"
 ruff_text_size = "0.0.12"

@@ -88,16 +88,35 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: bin-${{ matrix.wheel }}
-          path: python/pyxray/bin
+          path: python/pyxray_agent/bin
       - name: make the bundled binary executable
         if: runner.os != 'Windows'
-        run: chmod +x python/pyxray/bin/pyx
+        run: chmod +x python/pyxray_agent/bin/pyx
+      # maturin skips gitignored files even when `include` names them, and
+      # bin/ is ignored so a local build never commits a binary. Un-ignore it
+      # here, where putting the binary there is the whole point.
+      - name: let maturin see the bundled binary
+        shell: bash
+        run: sed -i.bak '/pyxray_agent\/bin/d' .gitignore
       - uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux || 'auto' }}
           args: --release --out dist
           sccache: "true"
+      # A wheel that installs but cannot import its extension, or that lost the
+      # bundled binary, fails nothing above. Install it and prove both work —
+      # on every runner that can execute what it built (not the aarch64 cross).
+      - name: smoke-test the wheel
+        if: matrix.wheel != 'linux-aarch64'
+        shell: bash
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          cd "$RUNNER_TEMP"
+          python -c "import pyxray_agent, pyxray_agent._pyxray; print(pyxray_agent.backend())"
+          python -c "import pathlib, pyxray_agent; b = pathlib.Path(pyxray_agent.__file__).parent / 'bin'; assert any(b.glob('pyx*')), 'wheel has no bundled pyx'"
+          pyx --version
+          echo 'import os; os.system("ls")' | pyx --format json --name smoke | python -c "import json,sys; assert json.load(sys.stdin)['metrics']['risk'] > 0"
       - uses: actions/upload-artifact@v4
         with:
           name: wheel-${{ matrix.wheel }}
@@ -123,6 +142,10 @@ jobs:
     needs: [binaries, wheels, sdist]
     if: startsWith(github.ref, 'refs/tags/v')
     environment: release
+    env:
+      # A step's `if` cannot see the step's own env or `secrets`, so the
+      # "is there a token?" question is asked here, once, at job level.
+      HAS_CARGO_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -152,7 +175,7 @@ jobs:
         with:
           toolchain: "1.96"
       - name: crates.io
-        if: env.CARGO_REGISTRY_TOKEN != ''
+        if: env.HAS_CARGO_TOKEN == 'true'
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |

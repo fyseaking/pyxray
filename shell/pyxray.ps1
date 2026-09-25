@@ -29,7 +29,7 @@ if (-not $env:PYXRAY_PYTHON) {
 
 function python3 {
     if ($env:PYXRAY_OFF -eq "1" -or $args.Count -eq 0) { & $env:PYXRAY_PYTHON @args }
-    else { & $env:PYXRAY_PYTHON -m pyxray.intercept -- $env:PYXRAY_PYTHON @args }
+    else { & $env:PYXRAY_PYTHON -m pyxray_agent.intercept -- $env:PYXRAY_PYTHON @args }
 }
 function python { python3 @args }
 function pyx { if ($env:PYXRAY_BIN) { & $env:PYXRAY_BIN @args } else { & pyx.exe @args } }

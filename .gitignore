@@ -1,11 +1,11 @@
 /target/
 __pycache__/
 *.pyc
-python/pyxray/_pyxray*.so
+python/pyxray_agent/_pyxray*.so
 /build/
 env.local.sh
-python/pyxray/_pyxray*.pyd
-python/pyxray/bin/
+python/pyxray_agent/_pyxray*.pyd
+python/pyxray_agent/bin/
 *.dylib
 /dist/
 .pytest_cache/

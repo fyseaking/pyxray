@@ -19,12 +19,12 @@ or, from a checkout, `/plugin install ./integrations/claude-code`.
 
 The plugin's `hooks/hooks.json` runs `hooks/pyxray-hook` through
 `${CLAUDE_PLUGIN_ROOT}`, so it works wherever the plugin is copied to. The
-hook needs the `pyxray` Python package to be importable by *some* Python on
-your machine, found in this order:
+hook needs the `pyxray_agent` Python package to be importable by *some*
+Python on your machine, found in this order:
 
 1. `PYXRAY_ROOT` — a checkout; its `python/` directory is used directly.
 2. The checkout this plugin directory sits inside (`/plugin install ./…`).
-3. Wherever `pip install pyxray` put it.
+3. Wherever `pip install pyxray-agent` put it.
 
 and it tries `PYXRAY_PYTHON`, then `python3`, `python`, and the Windows
 `py -3` launcher, until one of them can import it. Set either variable in the

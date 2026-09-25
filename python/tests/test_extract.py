@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import pyxray
+import pyxray_agent as pyxray
 
 FIXTURE = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "extract_cases.json"
 

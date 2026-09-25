@@ -11,9 +11,9 @@ rem PYXRAY_PYTHON names the real interpreter; otherwise the `py` launcher.
 setlocal
 if "%PYXRAY_OFF%"=="1" goto passthrough
 if defined PYXRAY_PYTHON (
-  "%PYXRAY_PYTHON%" -m pyxray.intercept -- "%PYXRAY_PYTHON%" %*
+  "%PYXRAY_PYTHON%" -m pyxray_agent.intercept -- "%PYXRAY_PYTHON%" %*
 ) else (
-  py -3 -m pyxray.intercept -- py -3 %*
+  py -3 -m pyxray_agent.intercept -- py -3 %*
 )
 exit /b %ERRORLEVEL%
 :passthrough

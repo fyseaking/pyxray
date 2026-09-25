@@ -22,10 +22,10 @@ about the failures it would otherwise swallow.
 
 Entry points
 ------------
-``python -m pyxray.intercept -- python3 script.py``
+``python -m pyxray_agent.intercept -- python3 script.py``
     Record, draw if watched, then run. This is what the PATH shim calls.
 
-``python -m pyxray.intercept --hook``
+``python -m pyxray_agent.intercept --hook``
     A ``PreToolUse``-shaped hook. Reads a JSON payload on stdin, finds the
     Python in it (a tool that takes code, or a shell command with Python in
     it — a script path, a heredoc, ``-c``, ``bash -c``, a pipe), records it,

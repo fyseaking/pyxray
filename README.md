@@ -39,12 +39,16 @@ warns you about.
 Linux, macOS and Windows.
 
 ```sh
-pip install pyxray          # the package, the interceptor, and the pyx binary
+pip install pyxray-agent    # the package, the interceptor, and the pyx binary
 cargo install pyx-cli       # just the binary, from source
 ```
 
 The wheels carry a `pyx` for their platform; `pip install` is the whole
-setup. From a checkout, with a Rust toolchain (1.96+, for the Ruff parser —
+setup. The distribution is `pyxray-agent` and the module `pyxray_agent`:
+the PyPI project called `pyxray` is an unrelated X-ray physics library, so
+installing that name gets you the wrong thing. If you wired a hook up before the
+rename, run its installer again (or point `PYXRAY_ROOT` at a fresh checkout)
+so it imports the new name. From a checkout, with a Rust toolchain (1.96+, for the Ruff parser —
 `rust-toolchain.toml` pins it) and Python 3.9+:
 
 ```sh
@@ -178,7 +182,7 @@ verdict appended to each tool result; the others end up calling the same
 thing —
 
 ```sh
-python3 -m pyxray.intercept --hook
+python3 -m pyxray_agent.intercept --hook
 ```
 
 — which reads a `PreToolUse`-shaped payload on stdin, finds the Python in it,
@@ -201,7 +205,7 @@ The Claude Code plugin is the same for the terminal and the desktop app:
 ### From Python
 
 ```python
-import pyxray
+import pyxray_agent as pyxray
 
 report = pyxray.analyze(source)
 report["meta"]["synopsis"]      # 'reads 2 files → computes with pandas → writes 3 files'
@@ -301,7 +305,7 @@ crates/pyxray-core     parse → analyse → Report (serde; the stable contract)
 crates/pyxray-render   Report → themed ratatui buffer → ANSI / text / HTML / SVG
 crates/pyx-cli         the `pyx` binary and the interactive viewer
 crates/pyxray-py       pyo3 bindings
-python/pyxray          the Python package, the interceptor and the hook
+python/pyxray_agent    the Python package, the interceptor and the hook
 ```
 
 `pyxray-core` has no idea how anything is drawn, and `pyxray-render` has no

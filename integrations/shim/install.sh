@@ -59,6 +59,6 @@ if [ -n "$bin" ]; then
     echo "  feed: $("$bin" --list 2>/dev/null | tail -1 | tr -d ' ')"
     echo "  watch it with: $bin watch"
 else
-    echo "  no pyx binary found yet: cargo build --release, or pip install pyxray"
+    echo "  no pyx binary found yet: cargo build --release, or pip install pyxray-agent"
 fi
 echo "  make it permanent: $here/install.sh --print >> ~/.bashrc"

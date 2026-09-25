@@ -1,13 +1,13 @@
 """pyxray — see what a Python snippet will do before you run it.
 
-    >>> import pyxray
+    >>> import pyxray_agent as pyxray
     >>> report = pyxray.analyze("import os; os.remove('x')")
     >>> report["meta"]["synopsis"]
     'DELETES x'
     >>> print(pyxray.render(open("script.py").read(), theme="carbon"))
 
 The heavy lifting is Rust; this package is the ergonomic surface and the
-interception glue. See :mod:`pyxray.intercept` for the part that sits in front
+interception glue. See :mod:`pyxray_agent.intercept` for the part that sits in front
 of a command a model just handed you.
 """
 

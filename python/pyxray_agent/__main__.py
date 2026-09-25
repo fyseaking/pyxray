@@ -1,7 +1,7 @@
-"""``python -m pyxray`` — a small CLI for when the ``pyx`` binary is not on PATH.
+"""``python -m pyxray_agent`` — a small CLI for when the ``pyx`` binary is not on PATH.
 
 It covers rendering and JSON output. The feed, the watcher, the TUI, the
-gate and the contact sheet live in ``pyx`` (``pip install pyxray`` ships it as
+gate and the contact sheet live in ``pyx`` (``pip install pyxray-agent`` ships it as
 a console script; a source checkout builds it with ``cargo build``)."""
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from . import extract as extract_python
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m pyxray",
+        prog="python -m pyxray_agent",
         description="See what a Python snippet will do before you run it.",
     )
     parser.add_argument("file", nargs="?", help="Python file; omit to read stdin")

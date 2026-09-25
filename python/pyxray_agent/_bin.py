@@ -1,7 +1,7 @@
 """The ``pyx`` console script: hand over to the native binary.
 
-Wheels built by the release workflow carry ``pyxray/bin/pyx`` (or ``pyx.exe``)
-for their platform, so ``pip install pyxray`` gives you the CLI as well as
+Wheels built by the release workflow carry ``pyxray_agent/bin/pyx`` (or ``pyx.exe``)
+for their platform, so ``pip install pyxray-agent`` gives you the CLI as well as
 the package. A wheel built locally with ``maturin develop`` has no binary in
 it; this then looks for one on ``PATH`` or in a checkout, and says how to
 get one if there is none.
