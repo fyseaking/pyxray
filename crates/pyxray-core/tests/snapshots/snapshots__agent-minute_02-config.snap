@@ -260,5 +260,11 @@ expression: report
     "",
     "cfg = json.loads(pathlib.Path(\"config.json\").read_text())",
     "print(cfg[\"dataset\"], cfg[\"cutoff\"])"
+  ],
+  "risk_terms": [
+    {
+      "why": "2 ordinary effect(s)",
+      "points": 2
+    }
   ]
 }

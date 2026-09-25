@@ -577,6 +577,17 @@ pub struct Report {
     /// How the import follower got on, when it ran.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub follow: Option<FollowSummary>,
+    /// The terms `metrics.risk` is the sum of (capped at 100), each with a
+    /// reason — "why is this 55?" answered by the score itself.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub risk_terms: Vec<RiskTerm>,
+}
+
+/// One term of the risk score.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct RiskTerm {
+    pub why: String,
+    pub points: u32,
 }
 
 /// A local module the snippet imports, and what running the parts it uses
@@ -667,6 +678,7 @@ impl Report {
             source: lines,
             linked: Vec::new(),
             follow: None,
+            risk_terms: Vec::new(),
         }
     }
 }

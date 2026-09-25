@@ -229,5 +229,15 @@ expression: report
     "",
     "r = requests.get(\"https://pypi.org/pypi/numpy/json\", timeout=5)",
     "print(r.json()[\"info\"][\"version\"])"
+  ],
+  "risk_terms": [
+    {
+      "why": "notable: GET https://pypi.org/pypi/numpy/json (line 3)",
+      "points": 10
+    },
+    {
+      "why": "2 ordinary effect(s)",
+      "points": 2
+    }
   ]
 }

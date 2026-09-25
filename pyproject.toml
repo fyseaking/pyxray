@@ -31,6 +31,7 @@ test = ["pytest>=7"]
 
 [project.scripts]
 pyxray-agent = "pyxray_agent.__main__:main"
+pyxray-mcp = "pyxray_agent.mcp:main"
 # `pyx` execs the native binary bundled into the wheel by the release
 # workflow (python/pyxray_agent/bin/pyx[.exe]); see python/pyxray_agent/_bin.py.
 pyx = "pyxray_agent._bin:main"

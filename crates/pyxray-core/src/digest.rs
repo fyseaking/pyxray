@@ -205,6 +205,14 @@ const INFO_CAP: u32 = 12;
 /// so a lone `rmtree` can never come out green and a lone `requests.get` can
 /// never come out inert. Anything else and the score and the colour would be
 /// telling a reader two different stories.
+/// [`risk_breakdown`] as report terms.
+pub fn risk_terms(hits: &[EffectHit]) -> Vec<RiskTerm> {
+    risk_breakdown(hits)
+        .into_iter()
+        .map(|(why, points)| RiskTerm { why, points })
+        .collect()
+}
+
 pub fn risk(hits: &[EffectHit]) -> u8 {
     risk_breakdown(hits)
         .iter()

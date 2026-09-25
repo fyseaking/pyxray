@@ -207,6 +207,7 @@ pub fn follow(report: &mut Report, opts: &XrayOpts) {
         );
     }
     report.metrics.risk = crate::digest::risk(&all);
+    report.risk_terms = crate::digest::risk_terms(&all);
     if linked.iter().any(|m| !m.effects.is_empty()) {
         let (synopsis, headline) = crate::digest::synopsis(&all, &report.metrics, &report.spine);
         report.meta.synopsis = synopsis;

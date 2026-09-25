@@ -1794,5 +1794,19 @@ expression: report
     "",
     "if __name__ == \"__main__\":",
     "    main()"
+  ],
+  "risk_terms": [
+    {
+      "why": "notable: write out / \"rmsf_summary.csv\" (line 50)",
+      "points": 10
+    },
+    {
+      "why": "notable: write out / \"flexible.json\" (line 51)",
+      "points": 10
+    },
+    {
+      "why": "10 ordinary effect(s)",
+      "points": 10
+    }
   ]
 }

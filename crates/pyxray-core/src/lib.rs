@@ -191,6 +191,7 @@ pub fn xray(source: &str, name: &str) -> Report {
     metrics.max_depth = max_depth as u32;
     metrics.complexity += 1;
     metrics.risk = digest::risk(&hits);
+    let risk_terms = digest::risk_terms(&hits);
 
     let texture = digest::texture(&src, &spine, &hits);
     let (synopsis, headline) = if source.trim().is_empty() {
@@ -220,6 +221,7 @@ pub fn xray(source: &str, name: &str) -> Report {
         source: source.lines().map(|l| l.to_string()).collect(),
         linked: Vec::new(),
         follow: None,
+        risk_terms,
     }
 }
 

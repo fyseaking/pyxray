@@ -150,5 +150,15 @@ expression: report
   "diagnostics": [],
   "source": [
     "print(sorted(__import__(\"os\").listdir(\"results\"))[:5])"
+  ],
+  "risk_terms": [
+    {
+      "why": "caution: import os (line 1)",
+      "points": 30
+    },
+    {
+      "why": "2 ordinary effect(s)",
+      "points": 2
+    }
   ]
 }

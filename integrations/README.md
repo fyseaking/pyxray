@@ -42,6 +42,7 @@ agent's `sh -c`, a Makefile, and a `subprocess.run` deep inside some library.
 | [Gemini CLI](gemini/) | `python -m pyxray_agent.install gemini --apply` (`~/.gemini/settings.json`) | `BeforeTool`/`AfterTool` on `run_shell_command`; the model gets a note after risky calls |
 | [Cursor](cursor/) | `python -m pyxray_agent.install cursor --apply` (`~/.cursor/hooks.json`) | `beforeShellExecution` asks over the gate; always answers, since Cursor reads silence as "deny" |
 | [OpenCode](opencode/) | plugin on `tool.execute.before` | blocks by throwing |
+| any MCP client | [`pyxray-mcp`](mcp/) | tools an agent calls *before* running: `analyze`, `extract`, `check`, `explain`, `feed` |
 | anything else | [PATH shim](shim/) | no API needed |
 
 ## A note on models and harnesses

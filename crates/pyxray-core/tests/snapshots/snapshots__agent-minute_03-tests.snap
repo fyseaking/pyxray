@@ -207,5 +207,15 @@ expression: report
     "",
     "result = subprocess.run([\"pytest\", \"-q\", \"tests/\"], check=False, capture_output=True)",
     "print(result.stdout.decode()[-400:])"
+  ],
+  "risk_terms": [
+    {
+      "why": "caution: run pytest -q tests/ (line 3)",
+      "points": 30
+    },
+    {
+      "why": "1 ordinary effect(s)",
+      "points": 1
+    }
   ]
 }

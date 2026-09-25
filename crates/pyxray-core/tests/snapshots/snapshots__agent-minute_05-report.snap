@@ -289,5 +289,15 @@ expression: report
     "out.mkdir(exist_ok=True)",
     "(out / \"report.md\").write_text(\"# Results\\n\\nAll runs completed.\\n\")",
     "print(\"wrote\", out / \"report.md\")"
+  ],
+  "risk_terms": [
+    {
+      "why": "notable: write out / \"report.md\" (line 5)",
+      "points": 10
+    },
+    {
+      "why": "2 ordinary effect(s)",
+      "points": 2
+    }
   ]
 }

@@ -915,5 +915,63 @@ expression: report
     "requests.post(\"https://example.invalid/report\", json={\"host\": os.uname().nodename})",
     "subprocess.run([\"rm\", \"-rf\", STAGING])",
     "print(\"done\")"
+  ],
+  "risk_terms": [
+    {
+      "why": "caution: getenv API_TOKEN (line 4)",
+      "points": 30
+    },
+    {
+      "why": "caution: rmtree /tmp/stage (line 7)",
+      "points": 30
+    },
+    {
+      "why": "caution: GET https://example.invalid/payload (line 10)",
+      "points": 30
+    },
+    {
+      "why": "caution: unpickle (line 12)",
+      "points": 30
+    },
+    {
+      "why": "notable: truncate f\"{STAGING}/{name}.sh\" (line 15)",
+      "points": 10
+    },
+    {
+      "why": "notable: write open(f\"{STAGING}/{name}.sh\", \"w\") (line 16)",
+      "points": 10
+    },
+    {
+      "why": "caution: run f\"bash {STAGING}/{name}.sh\" (line 17)",
+      "points": 30
+    },
+    {
+      "why": "caution: POST https://example.invalid/report (line 19)",
+      "points": 30
+    },
+    {
+      "why": "caution: run [\"rm\", \"-rf\", STAGING] (line 20)",
+      "points": 30
+    },
+    {
+      "why": "3 ordinary effect(s)",
+      "points": 3
+    },
+    {
+      "why": "5 different kinds of caution",
+      "points": 48
+    },
+    {
+      "why": "network and execution together",
+      "points": 15
+    },
+    {
+      "why": "network and writes together",
+      "points": 8
+    },
+    {
+      "why": "env API_TOKEN is sent over the network",
+      "points": 10
+    }
   ]
 }
