@@ -62,7 +62,12 @@ class Engine:
         raise NotImplementedError
 
     def look(self, code: str, **kw: Any) -> tuple[dict[str, Any], str]:
-        """Analyse once: append the feed event, render only if asked."""
+        """Analyse once: append the feed event, render only if asked.
+
+        Keywords: ``name``, ``source``, ``path`` (the log), ``draw`` and the
+        render options, plus ``record=False`` to analyse without appending,
+        ``origin`` (the script's path) and ``run`` (an execution id).
+        """
         raise NotImplementedError
 
     def feed_path(self) -> str:
@@ -189,10 +194,16 @@ class _Binary(Engine):
         # One invocation does everything: --emit appends the event,
         # --print-event hands it back as the first line, and the render — if
         # asked for — follows.
-        args = ["--emit", "--print-event", "--source", str(kw.get("source", "shim")),
+        args = ["--print-event", "--source", str(kw.get("source", "shim")),
                 "--name", str(kw.get("name", "<stdin>"))]
-        if path := kw.get("path"):
-            args += ["--feed", str(path)]
+        if kw.get("record", True):
+            args.append("--emit")
+            if path := kw.get("path"):
+                args += ["--feed", str(path)]
+        if origin := kw.get("origin"):
+            args += ["--origin", str(origin)]
+        if run := kw.get("run"):
+            args += ["--run", str(run)]
         if kw.get("draw"):
             args += ["--format", str(kw.get("format", "ansi")),
                      "--color", "always",

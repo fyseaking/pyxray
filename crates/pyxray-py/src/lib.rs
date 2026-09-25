@@ -121,6 +121,9 @@ fn render(
 /// is the common case when the only consumer is `pyx watch` in another pane.
 ///
 /// Returns `(event_json, rendered)`; `rendered` is empty when `draw` is false.
+/// `record=False` analyses without appending (a post-tool hook looking again
+/// at a call it already recorded); `origin` is the script's path and `run` an
+/// execution id, both carried on the event.
 #[pyfunction]
 #[pyo3(signature = (
     code,
@@ -133,6 +136,9 @@ fn render(
     format = "ansi",
     width = 100,
     icons = "both",
+    record = true,
+    origin = None,
+    run = None,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn look(
@@ -146,19 +152,25 @@ fn look(
     format: &str,
     width: u16,
     icons: &str,
+    record: bool,
+    origin: Option<&str>,
+    run: Option<&str>,
 ) -> PyResult<(String, String)> {
     fenced("look", || {
         let report = pyxray_core::xray_guarded(code, name);
-        let event = report.event(source);
-        let target = path
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(pyxray_core::feed::default_path);
         // A feed we cannot write is not worth failing the caller's command
         // over — the interceptor is in front of somebody else's work. But it
         // is worth telling the caller, so `PYXRAY_DEBUG` can surface it.
-        let feed_error = pyxray_core::feed::append(&target, &event)
-            .err()
-            .map(|e| format!("{}: {e}", target.display()));
+        let (event, feed_error) = pyxray_core::record(
+            &report,
+            &pyxray_core::RecordOpts {
+                source: source.to_string(),
+                run: run.map(str::to_string),
+                origin: origin.map(std::path::PathBuf::from),
+                feed: path.map(std::path::PathBuf::from),
+                write: record,
+            },
+        );
 
         let mut value =
             serde_json::to_value(&event).map_err(|e| PyValueError::new_err(e.to_string()))?;

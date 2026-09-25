@@ -58,6 +58,9 @@ FEED
                         runtime directory; `pyx --list` prints it)
         --source NAME   label the event with where it came from
         --print-event   print the event JSON as the first line of output
+                        (with or without --emit; only --emit writes the log)
+        --run ID        an execution id to carry on the event
+        --origin PATH   the script's path, when its source comes on stdin
         --quiet         emit only; draw nothing
 
     pyx watch [PATH]    follow the log. Keys: q quit, p pause, f filter,
@@ -135,6 +138,10 @@ pub struct Args {
     pub feed: Option<String>,
     pub source: String,
     pub print_event: bool,
+    /// An execution id to carry on the event (`--run`).
+    pub run: Option<String>,
+    /// The script's path, when the source arrives on stdin (`--origin`).
+    pub origin: Option<String>,
     pub quiet: bool,
     pub replay: bool,
     pub dump: bool,
@@ -173,6 +180,8 @@ impl Default for Args {
             feed: None,
             source: "cli".to_string(),
             print_event: false,
+            run: None,
+            origin: None,
             quiet: false,
             replay: false,
             dump: false,
@@ -198,8 +207,9 @@ fn allowed(flag: &str) -> &'static [Mode] {
         "--dump" | "--replay" | "--floor" => &[Watch],
         "--cwd" | "--no-files" | "--argv" => &[Extract],
         "--exec" | "--confirm" | "--gate" | "--emit" | "--feed" | "--source" | "--print-event"
-        | "--quiet" | "--tui" | "--contact-sheet" | "--check" | "--json" | "--stdin-is-command"
-        | "--name" | "--code" | "--no-gutter" | "--depth" | "-l" | "--layout" => &[Xray],
+        | "--run" | "--origin" | "--quiet" | "--tui" | "--contact-sheet" | "--check" | "--json"
+        | "--stdin-is-command" | "--name" | "--code" | "--no-gutter" | "--depth" | "-l"
+        | "--layout" => &[Xray],
         _ => &[Xray, Watch, Extract],
     }
 }
@@ -280,6 +290,8 @@ pub fn parse<I: Iterator<Item = String>>(mut it: I) -> Result<Parsed, String> {
                 a.feed = Some(value("--feed")?);
             }
             "--print-event" => a.print_event = true,
+            "--run" => a.run = Some(value("--run")?),
+            "--origin" => a.origin = Some(value("--origin")?),
             "--source" => a.source = value("--source")?,
             "--name" => a.name = Some(value("--name")?),
             "--cwd" => a.cwd = Some(value("--cwd")?),
@@ -387,9 +399,6 @@ pub fn parse<I: Iterator<Item = String>>(mut it: I) -> Result<Parsed, String> {
         if a.gate.is_some() && !a.exec {
             return Err("--gate needs --exec; to fail without running, use --check".into());
         }
-        if a.print_event && !a.emit {
-            return Err("--print-event needs --emit".into());
-        }
     }
     if a.mode == Mode::Extract && a.file.is_some() {
         return Err("pyx extract reads the command from stdin; it takes no FILE".into());
@@ -429,6 +438,8 @@ fn canonical(flag: &str) -> Option<&'static str> {
         "--emit",
         "--feed",
         "--print-event",
+        "--run",
+        "--origin",
         "--source",
         "--name",
         "--cwd",
@@ -509,8 +520,23 @@ mod tests {
             .unwrap_err()
             .contains("--check"));
         assert!(run(&["--confirm", "x.py"]).is_err());
-        assert!(run(&["--print-event", "x.py"]).is_err());
+        assert!(
+            run(&["--print-event", "x.py"]).is_ok(),
+            "print without writing"
+        );
+        assert!(
+            run(&["watch", "--run", "r1"]).is_err(),
+            "--run is for analysis"
+        );
         assert!(run(&["--exec", "--gate", "40", "x.py"]).is_ok());
+    }
+
+    #[test]
+    fn run_and_origin_parse() {
+        let a = run(&["--print-event", "--run", "r1", "--origin", "/w/job.py", "-"]).unwrap();
+        assert_eq!(a.run.as_deref(), Some("r1"));
+        assert_eq!(a.origin.as_deref(), Some("/w/job.py"));
+        assert!(!a.emit);
     }
 
     #[test]

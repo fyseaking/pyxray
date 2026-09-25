@@ -15,10 +15,12 @@ pub mod effects;
 pub mod extract;
 pub mod feed;
 pub mod model;
+pub mod record;
 pub mod source;
 
 pub use extract::{extract_all, extract_python, ExtractOpts, Extracted, Invocation};
 pub use model::*;
+pub use record::{record, RecordOpts};
 
 use ruff_python_parser::{parse_unchecked, ParseOptions};
 use source::Src;

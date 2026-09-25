@@ -666,6 +666,18 @@ pub struct Event {
     pub notes: Vec<EventNote>,
     /// Whether anything downstream refused to run it.
     pub blocked: bool,
+    /// One execution's id, shared by every line that belongs to it — the
+    /// predicted event and, later, what was observed. Absent when the caller
+    /// had none (a hook sees a tool call, not a process).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run: Option<String>,
+    /// The script's path, when the snippet came from a file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    /// A short hash of the source, so two runs of one path can be told apart
+    /// from two runs of the same code.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub digest: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -713,6 +725,9 @@ impl Report {
             synopsis: self.meta.synopsis.clone(),
             notes,
             blocked: false,
+            run: None,
+            path: None,
+            digest: None,
         }
     }
 

@@ -95,17 +95,29 @@ fn run() -> Result<ExitCode, String> {
     // The feed comes first: it is the one output that must survive even when
     // nothing is drawn, because it is what `pyx watch` is reading.
     let mut head = String::new();
-    if a.emit {
-        let path = a
-            .feed
-            .as_ref()
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(feed::default_path);
-        let event = report.event(&a.source);
+    if a.emit || a.print_event {
+        let (event, feed_error) = pyxray_core::record(
+            &report,
+            &pyxray_core::RecordOpts {
+                source: a.source.clone(),
+                run: a.run.clone(),
+                origin: a.origin.clone().map(std::path::PathBuf::from).or_else(|| {
+                    // A file on the command line is its own origin.
+                    a.file
+                        .clone()
+                        .filter(|p| p != "-")
+                        .map(std::path::PathBuf::from)
+                }),
+                feed: a.feed.as_ref().map(std::path::PathBuf::from),
+                // `--print-event` alone analyses and reports; only `--emit`
+                // writes the log.
+                write: a.emit,
+            },
+        );
         let mut value = serde_json::to_value(&event).map_err(|e| e.to_string())?;
-        if let Err(e) = feed::append(&path, &event) {
-            eprintln!("pyx: could not write {}: {e}", path.display());
-            value["feed_error"] = serde_json::Value::String(format!("{}: {e}", path.display()));
+        if let Some(err) = feed_error {
+            eprintln!("pyx: could not write {err}");
+            value["feed_error"] = serde_json::Value::String(err);
         }
         if a.print_event {
             head = format!("{value}\n");
