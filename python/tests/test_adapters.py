@@ -339,3 +339,26 @@ def test_every_adapter_is_registered():
     assert set(adapters.ADAPTERS) == {"claude", "codex", "gemini", "cursor"}
     with pytest.raises(ValueError):
         adapters.get("vim")
+
+
+# --------------------------------------------------------------------------- following imports
+
+
+def test_the_hook_follows_a_scripts_local_imports(env, tmp_path):
+    (tmp_path / "helper.py").write_bytes(b"import os\n\ndef run(c):\n    os.system(c)\n")
+    (tmp_path / "main.py").write_bytes(b"import helper\nhelper.run('make clean')\n")
+    payload = {"tool_name": "Bash", "cwd": str(tmp_path), "tool_input": {"command": "python3 main.py"}}
+    out = json.loads(run_hook("claude", "pre", payload, PYXRAY_GATE="10").stdout)
+    assert out["hookSpecificOutput"]["permissionDecision"] == "ask"
+    assert "helper.py" in out["reason"]
+    row = rows(env)[0]
+    assert row["risk"] >= 30
+    assert any(n.get("file") == "helper.py" for n in row["notes"])
+
+
+def test_following_can_be_switched_off(env, tmp_path):
+    (tmp_path / "helper.py").write_bytes(b"import os\nos.system('x')\n")
+    (tmp_path / "main.py").write_bytes(b"import helper\n")
+    payload = {"tool_name": "Bash", "cwd": str(tmp_path), "tool_input": {"command": "python3 main.py"}}
+    run_hook("claude", "pre", payload, PYXRAY_FOLLOW="0")
+    assert rows(env)[0]["risk"] < 30

@@ -36,7 +36,12 @@ class Engine:
 
     kind: str
 
-    def analyze(self, source: str, name: str = "<stdin>") -> dict[str, Any]:
+    def analyze(
+        self, source: str, name: str = "<stdin>", *, origin: str | None = None,
+        cwd: str | None = None, follow: bool = True,
+    ) -> dict[str, Any]:
+        """The full report. With ``origin`` (the script's path) or ``cwd``,
+        the local modules it imports are analysed too."""
         raise NotImplementedError
 
     def render(self, source: str, **kw: Any) -> str:
@@ -83,8 +88,11 @@ class _Extension(Engine):
     def __init__(self, mod: Any) -> None:
         self._m = mod
 
-    def analyze(self, source: str, name: str = "<stdin>") -> dict[str, Any]:
-        return json.loads(self._m.analyze_json(source, name))
+    def analyze(
+        self, source: str, name: str = "<stdin>", *, origin: str | None = None,
+        cwd: str | None = None, follow: bool = True,
+    ) -> dict[str, Any]:
+        return json.loads(self._m.analyze_json(source, name, origin, cwd, follow))
 
     def render(self, source: str, **kw: Any) -> str:
         return self._m.render(source, **kw)
@@ -144,8 +152,18 @@ class _Binary(Engine):
                 self._listing = {}
         return self._listing
 
-    def analyze(self, source: str, name: str = "<stdin>") -> dict[str, Any]:
-        return json.loads(self._run(["--format", "json", "--name", name], source))
+    def analyze(
+        self, source: str, name: str = "<stdin>", *, origin: str | None = None,
+        cwd: str | None = None, follow: bool = True,
+    ) -> dict[str, Any]:
+        args = ["--format", "json", "--name", name]
+        if origin:
+            args += ["--origin", str(origin)]
+        if cwd:
+            args += ["--cwd", str(cwd)]
+        if not follow:
+            args.append("--no-follow")
+        return json.loads(self._run(args, source))
 
     def render(self, source: str, **kw: Any) -> str:
         fmt = str(kw.get("format", "ansi"))
@@ -204,6 +222,10 @@ class _Binary(Engine):
             args += ["--origin", str(origin)]
         if run := kw.get("run"):
             args += ["--run", str(run)]
+        if cwd := kw.get("cwd"):
+            args += ["--cwd", str(cwd)]
+        if kw.get("follow") is False:
+            args.append("--no-follow")
         if kw.get("draw"):
             args += ["--format", str(kw.get("format", "ansi")),
                      "--color", "always",

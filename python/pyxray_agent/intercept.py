@@ -147,6 +147,7 @@ def look(
     record: bool = True,
     origin: str | None = None,
     run: str | None = None,
+    cwd: str | None = None,
 ) -> dict[str, Any]:
     """Record a snippet, and draw it if there is somewhere to draw.
 
@@ -182,6 +183,8 @@ def look(
         kwargs["origin"] = origin
     if run:
         kwargs["run"] = run
+    if cwd:
+        kwargs["cwd"] = cwd
     try:
         event, rendered = engine().look(code, **kwargs)
     except Exception as exc:  # noqa: BLE001 — the observer must not break the observed
@@ -269,6 +272,15 @@ def _source_for(argv: list[str]) -> tuple[str, str, bool]:
     return "", "<unknown>", False
 
 
+def _script_of(argv: list[str]) -> str | None:
+    """The script file a ``python …`` command line runs, if it runs one."""
+    try:
+        script = engine().classify_argv(argv[1:]).get("script")
+    except Exception:  # noqa: BLE001
+        return None
+    return script if script and os.path.isfile(script) else None
+
+
 def _hand_over(argv: list[str]) -> int:
     """Run the real command in our place."""
     if os.name != "nt":
@@ -285,7 +297,16 @@ def _run_wrapped(argv: list[str]) -> int:
     source, name, from_stdin = _source_for(argv)
     if not source:
         return _hand_over(argv)
-    event = look(source, name, source="shim")
+    # A script is its own origin, so its local imports are followed from its
+    # directory; anything else runs from here.
+    script = _script_of(argv)
+    event = look(
+        source,
+        name,
+        source="shim",
+        origin=os.path.abspath(script) if script else None,
+        cwd=os.getcwd() if not script else None,
+    )
     if not should_run(event):
         return 3
     if from_stdin:

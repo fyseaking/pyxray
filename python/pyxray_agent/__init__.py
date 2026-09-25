@@ -36,13 +36,24 @@ __all__ = [
 __version__ = "0.1.0"
 
 
-def analyze(source: str, name: str = "<stdin>") -> dict[str, Any]:
+def analyze(
+    source: str,
+    name: str = "<stdin>",
+    *,
+    origin: str | None = None,
+    cwd: str | None = None,
+    follow: bool = True,
+) -> dict[str, Any]:
     """Analyse a snippet and return the full report as a dict.
+
+    With ``origin`` (the script's path) or ``cwd`` (where a file-less snippet
+    would run), the local modules it imports are analysed too, and what they
+    reach is in ``report["linked"]`` and counted in the risk.
 
     Never raises on bad syntax: an unparseable snippet still yields a report,
     with the errors under ``diagnostics`` and ``meta.parsed`` set to False.
     """
-    return engine().analyze(source, name)
+    return engine().analyze(source, name, origin=origin, cwd=cwd, follow=follow)
 
 
 def render(

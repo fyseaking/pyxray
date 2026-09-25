@@ -546,7 +546,7 @@ fn flow(buf: &mut Buffer, a: Rect, r: &Report, t: &Theme, o: &Opts) {
 // ----------------------------------------------------------------- timeline
 
 fn timeline(buf: &mut Buffer, a: Rect, r: &Report, t: &Theme, o: &Opts) {
-    if r.effects.is_empty() {
+    if r.all_effects().next().is_none() {
         canvas::text(buf, a.x, a.y, a.width, "no side effects", t.faint());
         return;
     }
@@ -592,6 +592,11 @@ fn timeline(buf: &mut Buffer, a: Rect, r: &Report, t: &Theme, o: &Opts) {
             .unwrap_or(0);
         let room = a.right().saturating_sub(x).saturating_sub(note_w);
         let mut target = hit.target.clone().unwrap_or_else(|| hit.symbol.clone());
+        // A hit in an imported module says where: its line number above is
+        // that file's, not the snippet's.
+        if let Some(file) = &hit.file {
+            target = format!("{target}  {} {file}", t.gl.arrow);
+        }
         if *count > 1 {
             target.push_str(&format!("  x{count}"));
         }

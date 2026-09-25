@@ -176,6 +176,7 @@ def scan_payload(
                 source=origin,
                 record=record,
                 origin=item.get("path"),
+                cwd=str(payload["cwd"]) if payload.get("cwd") else None,
             )
         except Exception as exc:  # noqa: BLE001 — look() swallows already; belt and braces
             event = {"risk": 0, "band": "inert", "synopsis": "", "notes": [], "error": str(exc)}

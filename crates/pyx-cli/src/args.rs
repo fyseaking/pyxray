@@ -61,6 +61,9 @@ FEED
                         (with or without --emit; only --emit writes the log)
         --run ID        an execution id to carry on the event
         --origin PATH   the script's path, when its source comes on stdin
+        --cwd DIR       where a snippet with no file would run (for imports)
+        --no-follow     do not analyse the local modules it imports
+                        (also PYXRAY_FOLLOW=0)
         --quiet         emit only; draw nothing
 
     pyx watch [PATH]    follow the log. Keys: q quit, p pause, f filter,
@@ -142,6 +145,8 @@ pub struct Args {
     pub run: Option<String>,
     /// The script's path, when the source arrives on stdin (`--origin`).
     pub origin: Option<String>,
+    /// Follow the snippet's local imports (off with `--no-follow`).
+    pub follow: bool,
     pub quiet: bool,
     pub replay: bool,
     pub dump: bool,
@@ -182,6 +187,7 @@ impl Default for Args {
             print_event: false,
             run: None,
             origin: None,
+            follow: true,
             quiet: false,
             replay: false,
             dump: false,
@@ -205,11 +211,12 @@ fn allowed(flag: &str) -> &'static [Mode] {
     use Mode::*;
     match flag {
         "--dump" | "--replay" | "--floor" => &[Watch],
-        "--cwd" | "--no-files" | "--argv" => &[Extract],
+        "--no-files" | "--argv" => &[Extract],
+        "--cwd" => &[Extract, Xray],
         "--exec" | "--confirm" | "--gate" | "--emit" | "--feed" | "--source" | "--print-event"
-        | "--run" | "--origin" | "--quiet" | "--tui" | "--contact-sheet" | "--check" | "--json"
-        | "--stdin-is-command" | "--name" | "--code" | "--no-gutter" | "--depth" | "-l"
-        | "--layout" => &[Xray],
+        | "--run" | "--origin" | "--no-follow" | "--quiet" | "--tui" | "--contact-sheet"
+        | "--check" | "--json" | "--stdin-is-command" | "--name" | "--code" | "--no-gutter"
+        | "--depth" | "-l" | "--layout" => &[Xray],
         _ => &[Xray, Watch, Extract],
     }
 }
@@ -292,6 +299,7 @@ pub fn parse<I: Iterator<Item = String>>(mut it: I) -> Result<Parsed, String> {
             "--print-event" => a.print_event = true,
             "--run" => a.run = Some(value("--run")?),
             "--origin" => a.origin = Some(value("--origin")?),
+            "--no-follow" => a.follow = false,
             "--source" => a.source = value("--source")?,
             "--name" => a.name = Some(value("--name")?),
             "--cwd" => a.cwd = Some(value("--cwd")?),
@@ -440,6 +448,7 @@ fn canonical(flag: &str) -> Option<&'static str> {
         "--print-event",
         "--run",
         "--origin",
+        "--no-follow",
         "--source",
         "--name",
         "--cwd",
@@ -506,9 +515,13 @@ mod tests {
     fn watch_only_flags_are_refused_elsewhere_and_vice_versa() {
         assert!(run(&["--dump", "x.py"]).unwrap_err().contains("pyx watch"));
         assert!(run(&["watch", "--exec"]).unwrap_err().contains("plain pyx"));
-        assert!(run(&["--cwd", "/x", "s.py"])
+        assert!(run(&["--no-files", "s.py"])
             .unwrap_err()
             .contains("pyx extract"));
+        // --cwd is shared: where extract reads scripts, where analysis
+        // follows imports from. Watch has no use for it.
+        assert!(run(&["--cwd", "/x", "s.py"]).is_ok());
+        assert!(run(&["watch", "--cwd", "/x"]).is_err());
         assert!(run(&["watch", "--dump", "--floor", "check"]).is_ok());
     }
 

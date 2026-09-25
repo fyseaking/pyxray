@@ -52,12 +52,34 @@ fn pick_icons(id: &str) -> PyResult<Icons> {
     }
 }
 
-/// Analyse `source` and return the report as a JSON string.
+/// Where a snippet came from, as the core wants it. Following local imports
+/// is on unless asked off or `PYXRAY_FOLLOW=0`.
+fn xray_opts(origin: Option<&str>, cwd: Option<&str>, follow: bool) -> pyxray_core::XrayOpts {
+    let env_off = std::env::var("PYXRAY_FOLLOW").is_ok_and(|v| v == "0" || v == "off");
+    pyxray_core::XrayOpts {
+        origin: origin.map(std::path::PathBuf::from),
+        cwd: cwd.map(std::path::PathBuf::from),
+        follow: if follow && !env_off {
+            pyxray_core::FollowOpts::default()
+        } else {
+            pyxray_core::FollowOpts::off()
+        },
+    }
+}
+
+/// Analyse `source` and return the report as a JSON string. With `origin`
+/// (the script's path) or `cwd`, local imports are followed too.
 #[pyfunction]
-#[pyo3(signature = (source, name = "<stdin>"))]
-fn analyze_json(source: &str, name: &str) -> PyResult<String> {
+#[pyo3(signature = (source, name = "<stdin>", origin = None, cwd = None, follow = true))]
+fn analyze_json(
+    source: &str,
+    name: &str,
+    origin: Option<&str>,
+    cwd: Option<&str>,
+    follow: bool,
+) -> PyResult<String> {
     fenced("analyze", || {
-        let report = pyxray_core::xray_guarded(source, name);
+        let report = pyxray_core::xray_guarded_with(source, name, &xray_opts(origin, cwd, follow));
         serde_json::to_string(&report).map_err(|e| PyValueError::new_err(e.to_string()))
     })
 }
@@ -139,6 +161,8 @@ fn render(
     record = true,
     origin = None,
     run = None,
+    cwd = None,
+    follow = true,
 ))]
 #[allow(clippy::too_many_arguments)]
 fn look(
@@ -155,9 +179,11 @@ fn look(
     record: bool,
     origin: Option<&str>,
     run: Option<&str>,
+    cwd: Option<&str>,
+    follow: bool,
 ) -> PyResult<(String, String)> {
     fenced("look", || {
-        let report = pyxray_core::xray_guarded(code, name);
+        let report = pyxray_core::xray_guarded_with(code, name, &xray_opts(origin, cwd, follow));
         // A feed we cannot write is not worth failing the caller's command
         // over — the interceptor is in front of somebody else's work. But it
         // is worth telling the caller, so `PYXRAY_DEBUG` can surface it.

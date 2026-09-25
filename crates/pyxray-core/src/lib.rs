@@ -14,16 +14,52 @@ pub mod digest;
 pub mod effects;
 pub mod extract;
 pub mod feed;
+pub mod follow;
 pub mod model;
 pub mod record;
 pub mod source;
 
 pub use extract::{extract_all, extract_python, ExtractOpts, Extracted, Invocation};
+pub use follow::{FollowOpts, XrayOpts};
 pub use model::*;
 pub use record::{record, RecordOpts};
 
 use ruff_python_parser::{parse_unchecked, ParseOptions};
 use source::Src;
+
+/// [`xray_guarded`], knowing where the snippet came from: with an `origin`
+/// (the script's path) or a `cwd`, the local modules it imports are analysed
+/// too and what they reach is folded into the report. See [`follow`].
+pub fn xray_guarded_with(source: &str, name: &str, opts: &XrayOpts) -> Report {
+    let mut report = xray_guarded(source, name);
+    if opts.follow.enabled && report.meta.parsed {
+        // The follower reads files and runs the analyser again; a panic in
+        // there must not cost the report already made.
+        let snapshot = report.clone();
+        let opts = opts.clone();
+        let followed = std::thread::Builder::new()
+            .name("pyxray-follow".into())
+            .stack_size(64 << 20)
+            .spawn(move || {
+                let mut r = snapshot;
+                follow::follow(&mut r, &opts);
+                r
+            })
+            .ok()
+            .and_then(|h| h.join().ok());
+        if let Some(r) = followed {
+            report = r;
+        }
+    }
+    report
+}
+
+/// [`xray`] plus import following; see [`xray_guarded_with`].
+pub fn xray_with(source: &str, name: &str, opts: &XrayOpts) -> Report {
+    let mut report = xray(source, name);
+    follow::follow(&mut report, opts);
+    report
+}
 
 /// Analyse a snippet, and survive it. Runs [`xray`] on its own thread with a
 /// generous stack, and if anything inside panics — a parser edge case, an
@@ -180,6 +216,8 @@ pub fn xray(source: &str, name: &str) -> Report {
         texture,
         diagnostics,
         source: source.lines().map(|l| l.to_string()).collect(),
+        linked: Vec::new(),
+        follow: None,
     }
 }
 

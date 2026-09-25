@@ -9,7 +9,7 @@ use std::io::{IsTerminal, Read, Write};
 use std::process::ExitCode;
 
 use pyxray_core::feed;
-use pyxray_core::{extract, xray_guarded, Report};
+use pyxray_core::{extract, xray_guarded_with, FollowOpts, Report, XrayOpts};
 use pyxray_render::export::Format;
 use pyxray_render::layout;
 use pyxray_render::theme::THEMES;
@@ -71,7 +71,26 @@ fn run() -> Result<ExitCode, String> {
     }
 
     let (source, name) = read_input(&a)?;
-    let report = xray_guarded(&source, &name);
+    let origin = a
+        .origin
+        .clone()
+        .or_else(|| a.file.clone().filter(|p| p != "-"))
+        .map(std::path::PathBuf::from);
+    let follow_off =
+        !a.follow || std::env::var("PYXRAY_FOLLOW").is_ok_and(|v| v == "0" || v == "off");
+    let report = xray_guarded_with(
+        &source,
+        &name,
+        &XrayOpts {
+            origin,
+            cwd: a.cwd.clone().map(std::path::PathBuf::from),
+            follow: if follow_off {
+                FollowOpts::off()
+            } else {
+                FollowOpts::default()
+            },
+        },
+    );
 
     if a.json {
         let text = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;

@@ -569,9 +569,56 @@ pub struct Report {
     pub diagnostics: Vec<Diagnostic>,
     /// The source, kept so renderers can show code beside the analysis.
     pub source: Vec<String>,
+    /// Local modules the snippet imports, analysed too. Their hits stay here
+    /// rather than in `effects`, whose line numbers index `source`; risk,
+    /// synopsis and the event count both.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub linked: Vec<LinkedModule>,
+    /// How the import follower got on, when it ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub follow: Option<FollowSummary>,
+}
+
+/// A local module the snippet imports, and what running the parts it uses
+/// would do.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct LinkedModule {
+    /// The dotted name it was imported as (`helper`, `pkg.util`, `.models`).
+    pub module: String,
+    /// Its file, relative to the script's directory.
+    pub file: String,
+    /// The line of the import that pulled it in, in the file that imported it.
+    pub via_line: u32,
+    /// Its effects that the snippet actually reaches: module-level code (which
+    /// runs on import) and the functions and classes it uses. Each carries
+    /// `file`.
+    pub effects: Vec<EffectHit>,
+    /// Effects inside functions nobody calls, counted but not scored.
+    pub unreached: u32,
+}
+
+/// What the import follower did.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct FollowSummary {
+    /// The directory imports were resolved from.
+    pub root: String,
+    pub files: u32,
+    /// A limit (files, depth, size) stopped it before it ran out of imports.
+    pub truncated: bool,
+    /// Imports it did not follow, and why: `(module, reason)`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skipped: Vec<(String, String)>,
 }
 
 impl Report {
+    /// Every hit that counts: the snippet's own, then those reached in the
+    /// local modules it imports.
+    pub fn all_effects(&self) -> impl Iterator<Item = &EffectHit> {
+        self.effects
+            .iter()
+            .chain(self.linked.iter().flat_map(|m| m.effects.iter()))
+    }
+
     /// The report for a snippet the analyser could not finish — an internal
     /// panic caught by [`crate::xray_guarded`]. Empty, honest, and marked with
     /// one error diagnostic so a reader can tell "nothing found" from "could
@@ -618,6 +665,8 @@ impl Report {
                 col: 1,
             }],
             source: lines,
+            linked: Vec::new(),
+            follow: None,
         }
     }
 }
@@ -765,8 +814,7 @@ impl Report {
             .map(|d| d.as_millis() as u64)
             .unwrap_or(0);
         let mut notes: Vec<EventNote> = self
-            .effects
-            .iter()
+            .all_effects()
             .filter(|h| h.severity > Severity::Info)
             .map(|h| EventNote {
                 effect: h.effect,
@@ -808,7 +856,7 @@ impl Report {
     /// capability panel.
     pub fn effect_summary(&self) -> Vec<(Effect, Severity, u32)> {
         let mut out: Vec<(Effect, Severity, u32)> = Vec::new();
-        for hit in &self.effects {
+        for hit in self.all_effects() {
             match out.iter_mut().find(|(e, _, _)| *e == hit.effect) {
                 Some(slot) => {
                     slot.1 = slot.1.max(hit.severity);
@@ -835,9 +883,12 @@ impl Report {
     /// survivors put back into source order.
     pub fn timeline(&self, limit: usize) -> Vec<(&EffectHit, u32)> {
         let mut folded: Vec<(&EffectHit, u32)> = Vec::new();
-        for hit in &self.effects {
+        for hit in self.all_effects() {
             match folded.iter_mut().find(|(h, _)| {
-                h.effect == hit.effect && h.verb == hit.verb && h.target == hit.target
+                h.effect == hit.effect
+                    && h.verb == hit.verb
+                    && h.target == hit.target
+                    && h.file == hit.file
             }) {
                 Some(slot) => slot.1 += 1,
                 None => folded.push((hit, 1)),
@@ -852,7 +903,14 @@ impl Report {
             });
             folded.truncate(limit);
         }
-        folded.sort_by_key(|(h, _)| (h.line, h.col));
+        // The snippet's own lines first, in order; then each imported file's.
+        folded.sort_by(|(a, _), (b, _)| {
+            a.file
+                .is_some()
+                .cmp(&b.file.is_some())
+                .then(a.file.cmp(&b.file))
+                .then((a.line, a.col).cmp(&(b.line, b.col)))
+        });
         folded
     }
 
@@ -861,7 +919,7 @@ impl Report {
     }
 
     pub fn worst(&self) -> Option<Severity> {
-        self.effects.iter().map(|h| h.severity).max()
+        self.all_effects().map(|h| h.severity).max()
     }
 }
 

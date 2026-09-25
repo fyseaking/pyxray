@@ -246,7 +246,11 @@ pub fn plan(
         Layout::Flow => {
             let mut col = Column::new(x, y, inner_w, bottom, t);
             col.push(Panel::Caps, r, o, Some(2), 1);
-            let reserve = if r.effects.is_empty() { 0 } else { 10 };
+            let reserve = if r.all_effects().next().is_none() {
+                0
+            } else {
+                10
+            };
             let flow_cap = bottom.map(|b| b.saturating_sub(col.y + reserve));
             col.push(Panel::Flow, r, o, flow_cap, 3);
             col.push(Panel::Timeline, r, o, Some(10), 1);
