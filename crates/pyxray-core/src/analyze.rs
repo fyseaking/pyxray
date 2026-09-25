@@ -70,6 +70,9 @@ pub struct Analyzer<'a> {
     /// Modules pulled in with `from m import *`, in order, so a bare
     /// `system(...)` can be tried as `os.system`.
     star_modules: Vec<String>,
+    /// Local name → the secret it holds or was derived from. Scoped like
+    /// `consts`: a token read inside one function is not the module's.
+    taint: HashMap<String, Taint>,
     /// Current expression nesting, against [`MAX_EXPR_DEPTH`].
     expr_depth: u32,
     /// Only warn once per snippet about hitting a depth limit.
@@ -103,6 +106,7 @@ impl<'a> Analyzer<'a> {
             }],
             callable_aliases: HashMap::new(),
             star_modules: Vec::new(),
+            taint: HashMap::new(),
             expr_depth: 0,
             depth_warned: false,
             imports: Vec::new(),
@@ -314,6 +318,7 @@ impl<'a> Analyzer<'a> {
             consts: self.consts.clone(),
             origins: self.origins.clone(),
             callable_aliases: self.callable_aliases.clone(),
+            taint: self.taint.clone(),
         }
     }
 
@@ -322,6 +327,7 @@ impl<'a> Analyzer<'a> {
         self.consts = state.consts;
         self.origins = state.origins;
         self.callable_aliases = state.callable_aliases;
+        self.taint = state.taint;
     }
 
     /// One warning per snippet when a depth limit is hit; the rest of the walk
@@ -478,6 +484,9 @@ impl<'a> Analyzer<'a> {
             col: self.src.col_of(range.start()),
             snippet,
             note,
+            resolved: None,
+            flow: None,
+            file: None,
         });
     }
 
@@ -495,6 +504,19 @@ impl<'a> Analyzer<'a> {
     fn target_text(&self, e: &Expr) -> String {
         if let Some(s) = Self::str_lit(e) {
             return clip(&squeeze(s), TARGET);
+        }
+        // `json.load(open("cfg.json"))` is about cfg.json, and naming it so
+        // means the read and the parse are counted as one file, not two.
+        if let Expr::Call(inner) = e {
+            let opens = matches!(
+                self.resolve(&inner.func).as_deref(),
+                Some("open" | "io.open" | "codecs.open" | "gzip.open" | "bz2.open" | "lzma.open")
+            );
+            if opens {
+                if let Some(file) = inner.arguments.find_argument_value("file", 0) {
+                    return self.target_text(file);
+                }
+            }
         }
         // A name bound to a literal earlier in the file is far more useful
         // shown as its value than as its name.
@@ -593,6 +615,336 @@ impl<'a> Analyzer<'a> {
         )
     }
 
+    // ------------------------------------------------------------- secrets
+
+    /// The secret an expression carries, if any. Structural and cheap: it
+    /// looks at what the expression is made of, not at what runs.
+    fn taint_of(&self, e: &Expr) -> Option<Taint> {
+        self.taint_fuel(e, TAINT_FUEL)
+    }
+
+    fn taint_fuel(&self, e: &Expr, fuel: u32) -> Option<Taint> {
+        let f = fuel.checked_sub(1)?;
+        match e {
+            Expr::Name(n) => self.taint.get(n.id.as_str()).cloned(),
+            Expr::Subscript(sub) => self
+                .env_secret(sub)
+                .or_else(|| self.taint_fuel(&sub.value, f)),
+            Expr::Attribute(a) => self.taint_fuel(&a.value, f),
+            Expr::Call(c) => self.call_taint(c, f),
+            Expr::FString(fs) => fs
+                .value
+                .elements()
+                .filter_map(|el| el.as_interpolation())
+                .find_map(|x| self.taint_fuel(&x.expression, f)),
+            Expr::BinOp(b) => self
+                .taint_fuel(&b.left, f)
+                .or_else(|| self.taint_fuel(&b.right, f)),
+            Expr::Dict(d) => d.items.iter().find_map(|it| {
+                it.key
+                    .as_ref()
+                    .and_then(|k| self.taint_fuel(k, f))
+                    .or_else(|| self.taint_fuel(&it.value, f))
+            }),
+            Expr::List(l) => l.elts.iter().find_map(|x| self.taint_fuel(x, f)),
+            Expr::Tuple(t) => t.elts.iter().find_map(|x| self.taint_fuel(x, f)),
+            Expr::Set(st) => st.elts.iter().find_map(|x| self.taint_fuel(x, f)),
+            Expr::If(i) => self
+                .taint_fuel(&i.body, f)
+                .or_else(|| self.taint_fuel(&i.orelse, f)),
+            Expr::Await(a) => self.taint_fuel(&a.value, f),
+            Expr::Starred(st) => self.taint_fuel(&st.value, f),
+            Expr::Named(n) => self.taint_fuel(&n.value, f),
+            _ => None,
+        }
+    }
+
+    /// `os.environ["GITHUB_TOKEN"]`, as a secret.
+    fn env_secret(&self, sub: &ExprSubscript) -> Option<Taint> {
+        if self.resolve(&sub.value).as_deref() != Some("os.environ") {
+            return None;
+        }
+        let name = Self::str_lit(&sub.slice)?;
+        effects::is_secret_name(name).then(|| Taint {
+            secret: SecretKind::Env,
+            source: format!("env {name}"),
+            line: self.src.line_of(sub.range().start()),
+        })
+    }
+
+    fn call_taint(&self, call: &ExprCall, f: u32) -> Option<Taint> {
+        let canonical = self.resolve(&call.func).unwrap_or_default();
+        let line = self.src.line_of(call.range().start());
+        // Sources.
+        match canonical.as_str() {
+            "os.getenv" | "os.environ.get" | "os.environ.pop" | "dotenv.get_key" => {
+                let arg = if canonical == "dotenv.get_key" { 1 } else { 0 };
+                let name = call.arguments.args.get(arg).and_then(Self::str_lit)?;
+                return effects::is_secret_name(name).then(|| Taint {
+                    secret: SecretKind::Env,
+                    source: format!("env {name}"),
+                    line,
+                });
+            }
+            "keyring.get_password" | "keyring.get_credential" => {
+                return Some(Taint {
+                    secret: SecretKind::Keyring,
+                    source: "keyring".into(),
+                    line,
+                });
+            }
+            "dotenv.dotenv_values" => {
+                let path = call
+                    .arguments
+                    .args
+                    .first()
+                    .and_then(|a| self.secret_path_of(a, f))
+                    .unwrap_or_else(|| ".env".into());
+                return Some(Taint {
+                    secret: SecretKind::File,
+                    source: format!("file {path}"),
+                    line,
+                });
+            }
+            "open" | "io.open" | "builtins.open" | "codecs.open" => {
+                if let Some(path) = call
+                    .arguments
+                    .find_argument_value("file", 0)
+                    .and_then(|a| self.secret_path_of(a, f))
+                {
+                    return Some(Taint {
+                        secret: SecretKind::File,
+                        source: format!("file {path}"),
+                        line,
+                    });
+                }
+            }
+            _ => {}
+        }
+        if TAINT_CLEAN_CALLS.contains(&canonical.as_str()) {
+            return None;
+        }
+        // `Path("~/.ssh/id_rsa").read_text()`: reading a path that names a
+        // credential file.
+        if let Expr::Attribute(attr) = &*call.func {
+            let method = attr.attr.as_str();
+            if matches!(
+                method,
+                "read_text" | "read_bytes" | "open" | "read" | "readlines" | "readline"
+            ) {
+                if let Some(path) = self.secret_path_of(&attr.value, f) {
+                    return Some(Taint {
+                        secret: SecretKind::File,
+                        source: format!("file {path}"),
+                        line,
+                    });
+                }
+            }
+            // Any method on a secret — `.encode()`, `.strip()`, `.read()` on a
+            // key file's handle — still carries it.
+            if let Some(t) = self.taint_fuel(&attr.value, f) {
+                return Some(t);
+            }
+        }
+        // Otherwise, what a request, a command or a file read *returns* is new
+        // data, not the secret that went in: the response to an authenticated
+        // request is not the token. Only transformations carry a secret on.
+        if let Some(rule) = effects::lookup(&canonical) {
+            if matches!(
+                rule.effect,
+                Effect::Net
+                    | Effect::Process
+                    | Effect::FsRead
+                    | Effect::FsWrite
+                    | Effect::FsDelete
+                    | Effect::Dynamic
+            ) {
+                return None;
+            }
+        }
+        // Anything computed from a secret carries it: base64, json.dumps, a
+        // format call, a helper of the snippet's own.
+        call.arguments
+            .args
+            .iter()
+            .chain(call.arguments.keywords.iter().map(|k| &k.value))
+            .find_map(|a| self.taint_fuel(a, f))
+    }
+
+    /// The path an expression names, when it names a credential file:
+    /// a literal, a name bound to one, or one wrapped in `expanduser`,
+    /// `os.path.join`, `Path(...)` or `/`.
+    fn secret_path_of(&self, e: &Expr, fuel: u32) -> Option<String> {
+        let f = fuel.checked_sub(1)?;
+        let text = match e {
+            Expr::StringLiteral(s) => Some(s.value.to_str().to_string()),
+            Expr::Name(n) => self.consts.get(n.id.as_str()).cloned(),
+            Expr::FString(fs) => Some(
+                fs.value
+                    .elements()
+                    .filter_map(|el| el.as_literal())
+                    .map(|l| l.value.to_string())
+                    .collect::<Vec<_>>()
+                    .join("*"),
+            ),
+            Expr::BinOp(b) => {
+                let l = self.secret_path_of(&b.left, f);
+                if l.is_some() {
+                    return l;
+                }
+                let parts: Vec<String> = [&*b.left, &*b.right]
+                    .iter()
+                    .filter_map(|x| Self::str_lit(x).map(str::to_string))
+                    .collect();
+                (!parts.is_empty()).then(|| parts.join("/"))
+            }
+            Expr::Call(c) => {
+                let canonical = self.resolve(&c.func).unwrap_or_default();
+                let wraps = matches!(
+                    canonical.as_str(),
+                    "os.path.expanduser"
+                        | "os.path.join"
+                        | "os.path.abspath"
+                        | "os.path.expandvars"
+                        | "pathlib.Path"
+                        | "pathlib.PurePath"
+                        | "Path"
+                ) || canonical.ends_with(".expanduser")
+                    || canonical.ends_with(".joinpath");
+                if !wraps {
+                    return None;
+                }
+                let mut parts: Vec<String> = Vec::new();
+                if let Expr::Attribute(a) = &*c.func {
+                    if let Some(base) = self.secret_path_of(&a.value, f) {
+                        return Some(base);
+                    }
+                    if let Some(lit) = Self::str_lit(&a.value) {
+                        parts.push(lit.to_string());
+                    }
+                }
+                for a in &c.arguments.args {
+                    if let Some(p) = self.secret_path_of(a, f) {
+                        return Some(p);
+                    }
+                    if let Some(lit) = Self::str_lit(a) {
+                        parts.push(lit.to_string());
+                    } else if let Expr::Name(n) = a {
+                        if let Some(v) = self.consts.get(n.id.as_str()) {
+                            parts.push(v.clone());
+                        }
+                    }
+                }
+                (!parts.is_empty()).then(|| parts.join("/"))
+            }
+            _ => None,
+        }?;
+        effects::is_secret_path(&text).then(|| clip(&squeeze(&text), TARGET))
+    }
+
+    /// The first secret among a call's own arguments, receiver included.
+    fn secret_in_call(&self, call: &ExprCall) -> Option<Taint> {
+        let args = call
+            .arguments
+            .args
+            .iter()
+            .chain(call.arguments.keywords.iter().map(|k| &k.value));
+        for a in args {
+            if let Some(t) = self.taint_of(a) {
+                return Some(t);
+            }
+        }
+        None
+    }
+
+    /// If a secret reaches this call and the call sends, runs or writes,
+    /// attach the flow to the hit just pushed and raise it accordingly.
+    fn mark_flow(&mut self, call: &ExprCall, effect: Effect) {
+        let kind = match effect {
+            Effect::Net => FlowKind::Exfiltration,
+            Effect::Process => FlowKind::SecretToProcess,
+            Effect::FsWrite => FlowKind::SecretToDisk,
+            _ => return,
+        };
+        let Some(taint) = self.secret_in_call(call) else {
+            return;
+        };
+        let Some(hit) = self.effects.last_mut() else {
+            return;
+        };
+        let where_to = hit.target.clone().unwrap_or_else(|| "somewhere".into());
+        let what = format!("{} (line {})", taint.source, taint.line);
+        let (sev, note) = match (kind, taint.secret) {
+            (FlowKind::Exfiltration, SecretKind::Env) => (
+                Severity::Notable,
+                format!("sends the secret from {what} to {where_to}"),
+            ),
+            (FlowKind::Exfiltration, _) => (
+                Severity::Caution,
+                format!("sends the contents of {what} to {where_to}"),
+            ),
+            (FlowKind::SecretToProcess, _) => (
+                Severity::Caution,
+                format!("passes the secret from {what} to a command"),
+            ),
+            (FlowKind::SecretToDisk, _) => (
+                Severity::Notable,
+                format!("writes the secret from {what} to disk"),
+            ),
+        };
+        hit.severity = hit.severity.max(sev);
+        hit.note = Some(match hit.note.take() {
+            Some(existing) => format!("{note}; {existing}"),
+            None => note,
+        });
+        hit.flow = Some(Flow {
+            kind,
+            secret: taint.secret,
+            source: taint.source,
+            source_line: taint.line,
+        });
+    }
+
+    /// Record the exact target on the hit just pushed, for the effects a
+    /// policy can name (paths, hosts, commands, variables) — not for `print`.
+    fn set_resolved(&mut self, call: &ExprCall, spec: TargetArg) {
+        let wanted = self.effects.last().is_some_and(|h| {
+            !matches!(
+                h.effect,
+                Effect::Stdout | Effect::Random | Effect::Clock | Effect::Compute | Effect::Exit
+            )
+        });
+        if !wanted {
+            return;
+        }
+        let resolved = self.resolved_arg(call, spec);
+        if let Some(hit) = self.effects.last_mut() {
+            hit.resolved = resolved;
+        }
+    }
+
+    /// The whole literal an argument holds, unclipped — for policy matching.
+    fn resolved_arg(&self, call: &ExprCall, spec: TargetArg) -> Option<String> {
+        let e = match spec {
+            TargetArg::None => return None,
+            TargetArg::Pos(i) => call.arguments.args.get(i)?,
+            TargetArg::Named(name, i) => call.arguments.find_argument_value(name, i)?,
+        };
+        if let Some(s) = Self::str_lit(e) {
+            return Some(s.to_string());
+        }
+        if let Expr::Name(n) = e {
+            return self.consts.get(n.id.as_str()).cloned();
+        }
+        let elts: &[Expr] = match e {
+            Expr::List(l) => &l.elts,
+            Expr::Tuple(t) => &t.elts,
+            _ => return None,
+        };
+        let parts: Option<Vec<&str>> = elts.iter().map(Self::str_lit).collect();
+        parts.filter(|p| !p.is_empty()).map(|p| p.join(" "))
+    }
+
     fn on_call(&mut self, call: &ExprCall) {
         self.metrics.calls += 1;
         if self.is_shadowed(&call.func) {
@@ -641,6 +993,8 @@ impl<'a> Analyzer<'a> {
             }
             effect_mask.insert(effect);
             self.push_hit(effect, sev, verb, &rule_path, target, call.range(), note);
+            self.set_resolved(call, TargetArg::Named("file", 0));
+            self.mark_flow(call, effect);
         } else if let Some(rule) = effects::lookup(&canonical) {
             let target = self
                 .extract_target(call, rule.target)
@@ -701,6 +1055,8 @@ impl<'a> Analyzer<'a> {
                 call.range(),
                 note,
             );
+            self.set_resolved(call, rule.target);
+            self.mark_flow(call, effect);
         } else if let Some(rule) = canonical
             .rsplit_once('.')
             .filter(|(base, _)| !base.starts_with('<'))
@@ -726,6 +1082,8 @@ impl<'a> Analyzer<'a> {
                 call.range(),
                 note,
             );
+            self.set_resolved(call, rule.target);
+            self.mark_flow(call, rule.effect);
         } else if effects::is_compute_module(&canonical) && canonical.contains('.') {
             effect_mask.insert(Effect::Compute);
             let root = canonical.split('.').next().unwrap_or("").to_string();
@@ -1096,6 +1454,17 @@ impl<'a> Analyzer<'a> {
             }
         }
         self.origins.insert(name.to_string(), origin_text.clone());
+        // A name holds a secret while it was last bound to something derived
+        // from one. `+=` only ever adds to what it held.
+        match self.taint_of(origin) {
+            Some(t) => {
+                self.taint.insert(name.to_string(), t);
+            }
+            None if kind != BindKind::Augment => {
+                self.taint.remove(name);
+            }
+            None => {}
+        }
         if value != ValueKind::Unknown {
             self.kinds.insert(name.to_string(), value);
         }
@@ -1613,9 +1982,17 @@ impl<'a> Analyzer<'a> {
             Stmt::Assign(s) => {
                 self.expr(&s.value);
                 let kind = self.value_kind_of(&s.value);
+                let tainted = self.taint_of(&s.value);
                 for t in &s.targets {
                     self.expr_store(t);
                     self.bind_target(t, BindKind::Assign, kind, &s.value, line);
+                    // `headers["Authorization"] = tok` puts the token in
+                    // `headers`; so does `req.data = tok`.
+                    if let Some(taint) = &tainted {
+                        if let Some(base) = store_base(t) {
+                            self.taint.insert(base.to_string(), taint.clone());
+                        }
+                    }
                 }
                 let lhs = s
                     .targets
@@ -1891,7 +2268,37 @@ struct ScopeState {
     consts: HashMap<String, String>,
     origins: HashMap<String, String>,
     callable_aliases: HashMap<String, String>,
+    taint: HashMap<String, Taint>,
 }
+
+/// A secret a value holds or was computed from: where it was read, and what
+/// kind of secret it was.
+#[derive(Clone, Debug)]
+struct Taint {
+    secret: SecretKind,
+    /// `env GITHUB_TOKEN`, `file ~/.ssh/id_rsa`, `keyring`.
+    source: String,
+    line: u32,
+}
+
+/// How far `taint_of` follows an expression before giving up.
+const TAINT_FUEL: u32 = 24;
+
+/// Calls whose result says nothing about their argument's contents. `len(tok)`
+/// is a number, not the token.
+const TAINT_CLEAN_CALLS: &[&str] = &[
+    "len",
+    "bool",
+    "isinstance",
+    "issubclass",
+    "type",
+    "hash",
+    "id",
+    "callable",
+    "hasattr",
+    "print",
+    "repr_len",
+];
 
 /// Everything the walk collected, handed over in one piece.
 pub struct Findings {
@@ -1957,4 +2364,20 @@ pub fn is_noise_symbol(canonical: &str) -> bool {
             | "hasattr"
             | "super"
     )
+}
+
+/// The plain name a subscript or attribute store ultimately writes into:
+/// `headers` for `headers["a"]["b"] = x`, `req` for `req.data = x`.
+fn store_base(target: &Expr) -> Option<&str> {
+    match target {
+        Expr::Subscript(s) => match &*s.value {
+            Expr::Name(n) => Some(n.id.as_str()),
+            other => store_base(other),
+        },
+        Expr::Attribute(a) => match &*a.value {
+            Expr::Name(n) => Some(n.id.as_str()),
+            other => store_base(other),
+        },
+        _ => None,
+    }
 }

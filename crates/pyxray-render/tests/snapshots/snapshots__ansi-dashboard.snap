@@ -21,7 +21,7 @@ expression: text
 │    8   ├─ os.makedirs(STAGING)                 write │  │    4 ! § getenv   …! reads a secret f… │
 │   10 ! ├─ resp = requests.get("https://example…  net │  │    7 ! × rmtree   …! recursively dele… │
 │   11   ├─ blob = base64.b64decode(resp.content)      │  │    8   ▸ mkdir    /tmp/stage           │
-│   12 ! ├─ config = pickle.loads(blob)           eval │  │   10 ! ≈ GET      …! verify=False — T… │
+│   12 ! ├─ config = pickle.loads(blob)           eval │  │   10 ! ≈ GET      …! sends the secret… │
 │   14 ! ├─ for name, script in config["steps"]        │  │   12 ! ‡ unpickle …! unpickling runs … │
 │   15   │  ├─ with open(f"{STAGING}/{name}.sh…  write │  │   15 · ▸ truncate f"{STAGING}/{name}.… │
 │   16   │  │  └─ fh.write(script)               write │  │   16 · ▸ write    open(f"{STAGING}/{n… │

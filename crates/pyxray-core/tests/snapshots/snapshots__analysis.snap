@@ -708,7 +708,8 @@ expression: report
       "line": 10,
       "col": 13,
       "snippet": "os.environ.get(\"RMSF_DIR\", \"data/rmsf\")",
-      "note": null
+      "note": null,
+      "resolved": "RMSF_DIR"
     },
     {
       "effect": "fs_read",
@@ -741,7 +742,8 @@ expression: report
       "line": 30,
       "col": 19,
       "snippet": "DATA.glob(\"*.csv\")",
-      "note": null
+      "note": null,
+      "resolved": "*.csv"
     },
     {
       "effect": "stdout",

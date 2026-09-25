@@ -23,7 +23,7 @@ expression: text
     4 ! § getenv   API_TOKEN                                  ! reads a secret from the environment
     7 ! × rmtree   /tmp/stage                     ! recursively deletes a directory; ignore_errors…
     8   ▸ mkdir    /tmp/stage
-   10 ! ≈ GET      https://example.invalid/payload! verify=False — TLS certificates are not checked
+   10 ! ≈ GET      https://example.invalid/payload! sends the secret from env API_TOKEN (line 4) t…
    12 ! ‡ unpickle pickle.loads                                    ! unpickling runs arbitrary code
    15 · ▸ truncate f"{STAGING}/{name}.sh"
    16 · ▸ write    open(f"{STAGING}/{name}.sh", "w")

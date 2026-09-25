@@ -7,7 +7,7 @@ expression: "text(&state(sample()), 80, 10)"
    seen        #>X ~#e ! +?t= .x  fs | world | eval | work | out
 --------------------------------------------------------------------------------
    1m #     0 ... ... . .... ..  no side effects -- 1 statement        inert.py
-  30s #     2 <.. ... . .... ..  reads 2 files                         reads.py
+  30s #     2 <.. ... . .... ..  reads cfg.json                        reads.py
    5s ##   30 ... .$. . .... ..  runs `rm -rf build`                   shell.py
                L2 shell rm -rf build  runs a command through the shell; recurs~
 

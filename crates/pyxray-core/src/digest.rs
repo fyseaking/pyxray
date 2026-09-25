@@ -206,38 +206,72 @@ const INFO_CAP: u32 = 12;
 /// never come out inert. Anything else and the score and the colour would be
 /// telling a reader two different stories.
 pub fn risk(hits: &[EffectHit]) -> u8 {
-    let mut score = 0u32;
+    risk_breakdown(hits)
+        .iter()
+        .map(|(_, points)| points)
+        .sum::<u32>()
+        .min(100) as u8
+}
+
+/// The terms [`risk`] adds up, each with a reason a person can read. This is
+/// the score, not a description of it: `risk` is literally their sum, capped
+/// at 100, so the two can never disagree.
+pub fn risk_breakdown(hits: &[EffectHit]) -> Vec<(String, u32)> {
+    let mut terms: Vec<(String, u32)> = Vec::new();
     let mut infos = 0u32;
     let mut caution_kinds: BTreeSet<Effect> = BTreeSet::new();
     for hit in hits {
+        let what = match &hit.target {
+            Some(t) => format!("{} {t} (line {})", hit.verb, hit.line),
+            None => format!("{} (line {})", hit.verb, hit.line),
+        };
         match hit.severity {
             Severity::Caution => {
-                score += 30;
+                terms.push((format!("caution: {what}"), 30));
                 caution_kinds.insert(hit.effect);
             }
-            Severity::Notable => score += 10,
+            Severity::Notable => terms.push((format!("notable: {what}"), 10)),
             Severity::Info => infos += 1,
         }
     }
     // Volume of ordinary work is capped: a hundred prints is still a script
     // that prints, and must never *look* like one that deletes.
-    score += infos.min(INFO_CAP);
+    if infos > 0 {
+        terms.push((format!("{infos} ordinary effect(s)"), infos.min(INFO_CAP)));
+    }
     // Distinct dangerous capabilities compound: fetching *and* executing is
     // worse than doing either twice.
-    score += (caution_kinds.len().saturating_sub(1) as u32) * 12;
+    if caution_kinds.len() > 1 {
+        terms.push((
+            format!("{} different kinds of caution", caution_kinds.len()),
+            (caution_kinds.len() as u32 - 1) * 12,
+        ));
+    }
     let combo = |a: Effect, b: Effect| {
         hits.iter().any(|h| h.effect == a) && hits.iter().any(|h| h.effect == b)
     };
     if combo(Effect::Net, Effect::Process) || combo(Effect::Net, Effect::Dynamic) {
-        score += 15;
+        terms.push(("network and execution together".into(), 15));
     }
     if combo(Effect::Net, Effect::FsWrite) {
-        score += 8;
+        terms.push(("network and writes together".into(), 8));
     }
-    if combo(Effect::Env, Effect::Net) {
-        score += 10;
+    // A secret actually reaching the network is worth more than a secret and
+    // a network call merely being in the same snippet — and a key file leaving
+    // the machine more than a token going to what is probably its own API.
+    let flows: Vec<&Flow> = hits
+        .iter()
+        .filter_map(|h| h.flow.as_ref())
+        .filter(|f| f.kind == FlowKind::Exfiltration)
+        .collect();
+    if let Some(f) = flows.iter().find(|f| f.secret != SecretKind::Env) {
+        terms.push((format!("{} is sent over the network", f.source), 25));
+    } else if let Some(f) = flows.first() {
+        terms.push((format!("{} is sent over the network", f.source), 10));
+    } else if combo(Effect::Env, Effect::Net) {
+        terms.push(("environment and network together".into(), 10));
     }
-    score.min(100) as u8
+    terms
 }
 
 /// Per-line strip data: indentation profile plus whatever the analysis found

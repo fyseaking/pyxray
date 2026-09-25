@@ -91,7 +91,8 @@ expression: report
       "line": 3,
       "col": 10,
       "snippet": "subprocess.run([\"pytest\", \"-q\", \"tests/\"], check=False,…",
-      "note": "runs an external command; check=False — a failing command is ignored"
+      "note": "runs an external command; check=False — a failing command is ignored",
+      "resolved": "pytest -q tests/"
     },
     {
       "effect": "stdout",

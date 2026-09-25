@@ -91,7 +91,8 @@ expression: report
       "line": 3,
       "col": 5,
       "snippet": "requests.get(\"https://pypi.org/pypi/numpy/json\", timeout=5)",
-      "note": null
+      "note": null,
+      "resolved": "https://pypi.org/pypi/numpy/json"
     },
     {
       "effect": "stdout",

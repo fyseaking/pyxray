@@ -185,6 +185,67 @@ pub struct EffectHit {
     pub snippet: String,
     /// Why this was flagged, when the reason is not obvious from the symbol.
     pub note: Option<String>,
+    /// The whole literal target, unclipped, when the analyser knows it
+    /// exactly (a string literal, or a name bound to one). `target` is for
+    /// people and is shortened to fit; this is for policy matching, which must
+    /// never decide on a truncated URL.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved: Option<String>,
+    /// A secret reaching this call — the difference between "reads a token"
+    /// and "sends the token somewhere".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow: Option<Flow>,
+    /// The file this hit is in, when it is not the snippet itself: a local
+    /// module the snippet imports, relative to the script's directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+}
+
+/// Where a secret went.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowKind {
+    /// Onto the network.
+    Exfiltration,
+    /// Into a subprocess's arguments or environment.
+    SecretToProcess,
+    /// Onto disk.
+    SecretToDisk,
+}
+
+impl FlowKind {
+    pub fn id(self) -> &'static str {
+        match self {
+            FlowKind::Exfiltration => "exfiltration",
+            FlowKind::SecretToProcess => "secret_to_process",
+            FlowKind::SecretToDisk => "secret_to_disk",
+        }
+    }
+}
+
+/// What kind of secret it was, which decides how much it matters where it
+/// went: a key file leaving the machine is never routine, a token sent to the
+/// API it belongs to usually is.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[serde(rename_all = "snake_case")]
+pub enum SecretKind {
+    /// An environment variable whose name says it is a secret.
+    Env,
+    /// A credential file: SSH keys, cloud credentials, `.env`, `.netrc`…
+    File,
+    /// The system keyring.
+    Keyring,
+}
+
+/// A secret's path from where it was read to the call it reached.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Flow {
+    pub kind: FlowKind,
+    pub secret: SecretKind,
+    /// What the secret was: `env GITHUB_TOKEN`, `file ~/.ssh/id_rsa`, `keyring`.
+    pub source: String,
+    /// The line it was read on.
+    pub source_line: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -688,6 +749,12 @@ pub struct EventNote {
     pub target: Option<String>,
     pub line: u32,
     pub note: Option<String>,
+    /// The imported module this happens in, when it is not the snippet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Set when a secret reaches this call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flow: Option<FlowKind>,
 }
 
 impl Report {
@@ -708,6 +775,8 @@ impl Report {
                 target: h.target.clone(),
                 line: h.line,
                 note: h.note.clone(),
+                file: h.file.clone(),
+                flow: h.flow.as_ref().map(|f| f.kind),
             })
             .collect();
         notes.sort_by(|a, b| b.severity.cmp(&a.severity).then(a.line.cmp(&b.line)));

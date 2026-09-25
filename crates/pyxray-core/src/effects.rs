@@ -937,6 +937,40 @@ pub fn kwarg_hazard(callee: &str, kw: &str, value: &KwValue) -> Option<KwHazard>
 /// Case-insensitive substring match; deliberately generous, because the cost
 /// of a false alarm here is one amber row and the cost of a miss is a leaked
 /// key.
+/// Path fragments that name a credential file. Reading one is how a secret
+/// enters a snippet as surely as an environment variable, and the file kind
+/// matters more: a token belongs to the API it is sent to, a private key
+/// belongs nowhere else.
+pub const SECRET_PATHS: &[&str] = &[
+    ".ssh/",
+    "id_rsa",
+    "id_ed25519",
+    "id_ecdsa",
+    "id_dsa",
+    ".aws/credentials",
+    ".aws/config",
+    ".netrc",
+    ".git-credentials",
+    ".kube/config",
+    ".docker/config.json",
+    ".pypirc",
+    ".npmrc",
+    ".config/gh/hosts.yml",
+    ".gnupg/",
+    "/etc/shadow",
+];
+
+/// Whether a path names a credential file. `.env` counts only as the whole
+/// file name (`.env`, `prod.env`, `.env.local`), so `.envrc` and `venv` do not.
+pub fn is_secret_path(path: &str) -> bool {
+    let p = path.replace('\\', "/").to_ascii_lowercase();
+    if SECRET_PATHS.iter().any(|needle| p.contains(needle)) {
+        return true;
+    }
+    let name = p.rsplit('/').next().unwrap_or(&p);
+    name == ".env" || name.starts_with(".env.") || name.ends_with(".env")
+}
+
 pub fn is_secret_name(name: &str) -> bool {
     const HINTS: &[&str] = &[
         "token",

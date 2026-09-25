@@ -6,6 +6,6 @@ expression: "text(&s, 80, 7)"
   risk .._
    seen        #>X ~#e ! +?t= .x  fs | world | eval | work | out
 --------------------------------------------------------------------------------
-  30s #     2 <.. ... . .... ..  reads 2 files                         reads.py
+  30s #     2 <.. ... . .... ..  reads cfg.json                        reads.py
    5s ##   30 ... .$. . .... ..  runs `rm -rf build`                   shell.py
  scrolled | 4 shown | inert and above  q quit

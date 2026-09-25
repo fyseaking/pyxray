@@ -24,7 +24,7 @@ expression: text
 │   10 ! ├─ resp = requests.get("https://example…  net │  │    4 ! § getenv   …! reads a secret f… │
 │   11   ├─ blob = base64.b64decode(resp.content)      │  │    7 ! × rmtree   …! recursively dele… │
 │   12 ! ├─ config = pickle.loads(blob)           eval │  │    8   ▸ mkdir    /tmp/stage           │
-│   14 ! ├─ for name, script in config["steps"]        │  │   10 ! ≈ GET      …! verify=False — T… │
+│   14 ! ├─ for name, script in config["steps"]        │  │   10 ! ≈ GET      …! sends the secret… │
 │   15   │  ├─ with open(f"{STAGING}/{name}.sh…  write │  │   12 ! ‡ unpickle …! unpickling runs … │
 │   16   │  │  └─ fh.write(script)               write │  │   15 · ▸ truncate f"{STAGING}/{name}.… │
 │   17 ! │  └─ subprocess.run(f"bash {STAGING}…  shell │  │   16 · ▸ write    open(f"{STAGING}/{n… │
