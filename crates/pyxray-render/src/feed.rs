@@ -261,7 +261,7 @@ pub fn header(buf: &mut Buffer, a: Rect, stats: &Stats, source: &str, t: &Theme)
     }
     if stats.blocked > 0 {
         let blocked = format!(" {sep} {} blocked", stats.blocked);
-        canvas::text(
+        x += canvas::text(
             buf,
             x,
             a.y,
@@ -272,7 +272,11 @@ pub fn header(buf: &mut Buffer, a: Rect, stats: &Stats, source: &str, t: &Theme)
                 .add_modifier(Modifier::BOLD),
         );
     }
-    canvas::segs_right_bounded(buf, a.x, a.right(), a.y, &[(source, t.faint())]);
+    // The log's path goes at the right, but only into the space the counts
+    // left: drawn over them it reads as one garbled word.
+    if canvas::width(source) + 2 <= a.right().saturating_sub(x) {
+        canvas::segs_right_bounded(buf, x, a.right(), a.y, &[(source, t.faint())]);
+    }
 
     if a.height < 2 {
         return;

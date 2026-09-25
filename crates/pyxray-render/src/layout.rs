@@ -355,7 +355,10 @@ pub fn render(
 /// for their ASCII stand-ins. The user's own text is left alone: a CJK
 /// identifier is theirs to display, and replacing a wide cell with a narrow
 /// one would break the grid anyway.
-fn asciify(buf: &mut Buffer) {
+///
+/// Public so that anything composing its own screen from the same parts —
+/// `pyx watch`, the viewer's status bar — can hold the same promise.
+pub fn asciify(buf: &mut Buffer) {
     for y in 0..buf.area.height {
         for x in 0..buf.area.width {
             let Some(cell) = buf.cell_mut((x, y)) else {

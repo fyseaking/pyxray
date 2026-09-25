@@ -85,7 +85,7 @@ pub fn run(o: Options) -> io::Result<()> {
             // Tall enough for everything, so a dump is never silently cut.
             (state.events.len() as u16).saturating_add(6).max(th)
         });
-        let buf = compose(&state, &o, w, h);
+        let buf = compose(&state, &o, w, h, now_ms());
         let theme = THEMES[state.theme];
         let text = match o.format {
             // A dump with no format asked for follows the terminal: escapes
@@ -121,69 +121,94 @@ pub fn run(o: Options) -> io::Result<()> {
 fn pump(out: &mut Stdout, tail: &mut Tail, state: &mut State, o: &Options) -> io::Result<()> {
     loop {
         for event in tail.poll() {
-            state.stats.push(&event);
-            if !state.paused {
-                state.events.push_back(event);
-                while state.events.len() > BACKLOG {
-                    state.events.pop_front();
-                }
-            }
+            ingest(state, event);
         }
         draw(out, state, o)?;
 
         if !event::poll(Duration::from_millis(200))? {
             continue;
         }
-        match event::read()? {
-            TermEvent::Key(KeyEvent {
-                code,
-                modifiers,
-                kind: KeyEventKind::Press,
-                ..
-            }) => match code {
-                KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
-                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return Ok(()),
-                KeyCode::Char('p') => {
-                    state.paused = !state.paused;
-                    state.status = if state.paused {
-                        "paused \u{00b7} p to resume".into()
-                    } else {
-                        "following".into()
-                    };
-                }
-                KeyCode::Char('f') => {
-                    state.floor = match state.floor {
-                        Band::Inert => Band::Routine,
-                        Band::Routine => Band::Check,
-                        Band::Check => Band::Read,
-                        Band::Read => Band::Inert,
-                    };
-                    state.status = format!("showing {} and above", state.floor.word());
-                }
-                KeyCode::Char('n') => {
-                    state.notes = !state.notes;
-                    state.status = format!("notes {}", if state.notes { "on" } else { "off" });
-                }
-                KeyCode::Char('t') => {
-                    state.theme = (state.theme + 1) % THEMES.len();
-                    state.status = format!("theme: {}", THEMES[state.theme].name);
-                }
-                KeyCode::Char('c') => {
-                    state.events.clear();
-                    state.scroll = 0;
-                    state.status = "cleared the view; the log is untouched".into();
-                }
-                KeyCode::Up | KeyCode::Char('k') => state.scroll += 1,
-                KeyCode::Down | KeyCode::Char('j') => state.scroll = state.scroll.saturating_sub(1),
-                KeyCode::PageUp => state.scroll += 10,
-                KeyCode::PageDown => state.scroll = state.scroll.saturating_sub(10),
-                KeyCode::End => state.scroll = 0,
-                _ => {}
-            },
-            TermEvent::Resize(_, _) => state.scroll = 0,
-            _ => {}
+        if let Action::Quit = apply(state, &event::read()?) {
+            return Ok(());
         }
     }
+}
+
+/// What the loop should do after an input event.
+#[derive(Debug, PartialEq, Eq)]
+enum Action {
+    Continue,
+    Quit,
+}
+
+/// Take one event from the log: always into the totals, onto the screen
+/// unless paused, and never more than [`BACKLOG`] of them.
+fn ingest(state: &mut State, event: Event) {
+    state.stats.push(&event);
+    if !state.paused {
+        state.events.push_back(event);
+        while state.events.len() > BACKLOG {
+            state.events.pop_front();
+        }
+    }
+}
+
+/// Apply one terminal event to the state. Pure apart from the state it is
+/// given, so every key can be tested without a terminal.
+///
+/// Only key *presses* count. Windows reports a release for every press, and
+/// acting on both would make every toggle a no-op and every scroll a double.
+fn apply(state: &mut State, input: &TermEvent) -> Action {
+    match input {
+        TermEvent::Key(KeyEvent {
+            code,
+            modifiers,
+            kind: KeyEventKind::Press,
+            ..
+        }) => match code {
+            KeyCode::Char('q') | KeyCode::Esc => return Action::Quit,
+            KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => return Action::Quit,
+            KeyCode::Char('p') => {
+                state.paused = !state.paused;
+                state.status = if state.paused {
+                    "paused \u{00b7} p to resume".into()
+                } else {
+                    "following".into()
+                };
+            }
+            KeyCode::Char('f') => {
+                state.floor = match state.floor {
+                    Band::Inert => Band::Routine,
+                    Band::Routine => Band::Check,
+                    Band::Check => Band::Read,
+                    Band::Read => Band::Inert,
+                };
+                state.status = format!("showing {} and above", state.floor.word());
+            }
+            KeyCode::Char('n') => {
+                state.notes = !state.notes;
+                state.status = format!("notes {}", if state.notes { "on" } else { "off" });
+            }
+            KeyCode::Char('t') => {
+                state.theme = (state.theme + 1) % THEMES.len();
+                state.status = format!("theme: {}", THEMES[state.theme].name);
+            }
+            KeyCode::Char('c') => {
+                state.events.clear();
+                state.scroll = 0;
+                state.status = "cleared the view; the log is untouched".into();
+            }
+            KeyCode::Up | KeyCode::Char('k') => state.scroll += 1,
+            KeyCode::Down | KeyCode::Char('j') => state.scroll = state.scroll.saturating_sub(1),
+            KeyCode::PageUp => state.scroll += 10,
+            KeyCode::PageDown => state.scroll = state.scroll.saturating_sub(10),
+            KeyCode::End => state.scroll = 0,
+            _ => {}
+        },
+        TermEvent::Resize(_, _) => state.scroll = 0,
+        _ => {}
+    }
+    Action::Continue
 }
 
 fn now_ms() -> u64 {
@@ -195,15 +220,19 @@ fn now_ms() -> u64 {
 
 fn draw(out: &mut Stdout, state: &mut State, o: &Options) -> io::Result<()> {
     let (w, h) = terminal::size()?;
+    out.write_all(frame(state, o, w, h, now_ms()).as_bytes())?;
+    out.flush()
+}
+
+/// One whole screen, as the bytes to write to a raw-mode terminal.
+fn frame(state: &mut State, o: &Options, w: u16, h: u16, now: u64) -> String {
     // Scrolling is clamped here rather than at the keypress: only now is the
     // terminal height known, and without this `k` past the oldest row walks the
     // window off the top and leaves a blank body under an honest "N shown".
     let ceiling = rows(state).len().saturating_sub(body_height(h) as usize);
     state.scroll = state.scroll.min(ceiling);
-    let buf = compose(state, o, w, h);
-    let theme = THEMES[state.theme];
-    out.write_all(export::to_ansi_screen(&buf, &theme, 1).as_bytes())?;
-    out.flush()
+    let buf = compose(state, o, w, h, now);
+    export::to_ansi_screen(&buf, &THEMES[state.theme], 1)
 }
 
 /// Rows of the body, newest last: one per event that clears the filter, plus a
@@ -231,7 +260,9 @@ fn body_height(h: u16) -> u16 {
     h.saturating_sub(3u16.min(h) + 2)
 }
 
-fn compose(state: &State, o: &Options, w: u16, h: u16) -> ratatui::buffer::Buffer {
+/// The screen as a buffer. `now` is the clock the age column is measured
+/// against, passed in so a render is a pure function of its inputs.
+fn compose(state: &State, o: &Options, w: u16, h: u16, now: u64) -> ratatui::buffer::Buffer {
     use ratatui::buffer::Buffer;
     use ratatui::layout::Rect;
 
@@ -269,7 +300,6 @@ fn compose(state: &State, o: &Options, w: u16, h: u16) -> ratatui::buffer::Buffe
     let window = body_h as usize;
     let end = total.saturating_sub(state.scroll);
     let start = end.saturating_sub(window);
-    let now = now_ms();
 
     for (i, (event, is_note)) in rows[start..end].iter().enumerate() {
         let y = body_top + i as u16;
@@ -338,5 +368,256 @@ fn compose(state: &State, o: &Options, w: u16, h: u16) -> ratatui::buffer::Buffe
         bar.fg(theme.pal.dim),
     );
 
+    // The hints and status above, and every synopsis in the rows, carry the
+    // analyser's own punctuation; an ASCII theme has to stay ASCII anyway.
+    if theme.gl.ellipsis.is_ascii() {
+        pyxray_render::layout::asciify(&mut buf);
+    }
     buf
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crossterm::event::KeyEventState;
+    use pyxray_render::canvas;
+
+    const NOW: u64 = 1_800_000_000_000;
+
+    fn event(src: &str, name: &str, ago_ms: u64) -> Event {
+        let mut e = pyxray_core::xray(src, name).event("test");
+        e.ts = NOW - ago_ms;
+        e
+    }
+
+    /// Three events across the bands: one inert, one routine read, one
+    /// shell-out whose note earns it a second row.
+    fn sample() -> Vec<Event> {
+        vec![
+            event("x = 1 + 1\n", "inert.py", 90_000),
+            event(
+                "import json\njson.load(open('cfg.json'))\n",
+                "reads.py",
+                30_000,
+            ),
+            event("import os\nos.system('rm -rf build')\n", "shell.py", 5_000),
+        ]
+    }
+
+    fn state(events: Vec<Event>) -> State {
+        let mut s = State {
+            events: VecDeque::new(),
+            stats: feedview::Stats::default(),
+            theme: THEMES.iter().position(|t| t.id == "mono").unwrap_or(0),
+            floor: Band::Inert,
+            paused: false,
+            scroll: 0,
+            notes: true,
+            status: "q quit".into(),
+        };
+        for e in events {
+            ingest(&mut s, e);
+        }
+        s
+    }
+
+    fn options() -> Options {
+        Options {
+            path: PathBuf::from("feed.jsonl"),
+            theme: THEMES[0],
+            opts: Opts::default(),
+            replay: false,
+            floor: Band::Inert,
+            dump: false,
+            format: export::Format::Text,
+            fragment: false,
+            size: (None, None),
+        }
+    }
+
+    fn text(s: &State, w: u16, h: u16) -> String {
+        export::to_text(&compose(s, &options(), w, h, NOW))
+    }
+
+    fn press(code: KeyCode) -> TermEvent {
+        TermEvent::Key(KeyEvent {
+            code,
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        })
+    }
+
+    #[test]
+    fn empty_feed() {
+        insta::assert_snapshot!(text(&state(vec![]), 80, 8));
+    }
+
+    #[test]
+    fn three_events_with_a_note_row() {
+        insta::assert_snapshot!(text(&state(sample()), 80, 10));
+    }
+
+    #[test]
+    fn filtered_to_check_and_above() {
+        let mut s = state(sample());
+        s.floor = Band::Check;
+        insta::assert_snapshot!(text(&s, 80, 8));
+    }
+
+    #[test]
+    fn paused_and_narrow() {
+        let mut s = state(sample());
+        s.paused = true;
+        insta::assert_snapshot!(text(&s, 40, 8));
+    }
+
+    #[test]
+    fn scrolled_back() {
+        let mut s = state(sample());
+        s.scroll = 1;
+        insta::assert_snapshot!(text(&s, 80, 7));
+    }
+
+    /// The regressions fixed in 73f14f6, as invariants: a raw-mode frame has
+    /// no newlines, positions every row itself, and never writes past the
+    /// right edge — any of which scrolls or smears the screen.
+    #[test]
+    fn frames_position_every_row_and_fit_the_width() {
+        for &w in &[20u16, 40, 80, 200] {
+            for &h in &[1u16, 3, 5, 40] {
+                for theme in 0..THEMES.len() {
+                    let mut s = state(sample());
+                    s.theme = theme;
+                    let f = frame(&mut s, &options(), w, h, NOW);
+                    assert!(!f.contains('\n') && !f.contains('\r'), "newline at {w}x{h}");
+                    let positioned = (1..=h)
+                        .filter(|y| f.contains(&format!("\x1b[{y};1H")))
+                        .count();
+                    assert_eq!(positioned, h as usize, "rows positioned at {w}x{h}");
+                    for row in visible_rows(&f) {
+                        assert!(canvas::width(&row) <= w, "row wider than {w}: {row:?}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The text of each screen row, with every escape sequence removed.
+    fn visible_rows(frame: &str) -> Vec<String> {
+        let mut rows = Vec::new();
+        for chunk in frame.split("\x1b[").skip(1) {
+            // Each chunk starts with the rest of one CSI sequence; the final
+            // byte is the first ASCII letter.
+            let end = chunk
+                .find(|c: char| c.is_ascii_alphabetic())
+                .map_or(0, |i| i + 1);
+            let (csi, text) = chunk.split_at(end);
+            if csi.ends_with('H') {
+                rows.push(String::new());
+            }
+            if let Some(last) = rows.last_mut() {
+                last.push_str(text);
+            }
+        }
+        rows
+    }
+
+    /// `mono` promises pure ASCII; the hints, the status line and the
+    /// analyser's synopses all bring their own punctuation.
+    #[test]
+    fn ascii_themes_stay_ascii() {
+        for (i, theme) in THEMES.iter().enumerate() {
+            if !theme.gl.ellipsis.is_ascii() {
+                continue;
+            }
+            for events in [vec![], sample()] {
+                let mut s = state(events);
+                s.theme = i;
+                s.paused = true;
+                apply(&mut s, &press(KeyCode::Char('p')));
+                apply(&mut s, &press(KeyCode::Char('p')));
+                let out = text(&s, 100, 10);
+                assert!(out.is_ascii(), "{}: {out}", theme.id);
+            }
+        }
+    }
+
+    #[test]
+    fn scroll_is_clamped_to_the_oldest_row() {
+        let mut s = state(sample());
+        s.scroll = 999;
+        let h = 6;
+        frame(&mut s, &options(), 80, h, NOW);
+        assert_eq!(s.scroll, rows(&s).len() - body_height(h) as usize);
+    }
+
+    #[test]
+    fn keys() {
+        let mut s = state(sample());
+        assert_eq!(apply(&mut s, &press(KeyCode::Char('q'))), Action::Quit);
+        assert_eq!(apply(&mut s, &press(KeyCode::Esc)), Action::Quit);
+        let ctrl_c = TermEvent::Key(KeyEvent {
+            code: KeyCode::Char('c'),
+            modifiers: KeyModifiers::CONTROL,
+            kind: KeyEventKind::Press,
+            state: KeyEventState::NONE,
+        });
+        assert_eq!(apply(&mut s, &ctrl_c), Action::Quit);
+
+        let mut seen = vec![s.floor];
+        for _ in 0..4 {
+            apply(&mut s, &press(KeyCode::Char('f')));
+            seen.push(s.floor);
+        }
+        assert_eq!(
+            seen,
+            [
+                Band::Inert,
+                Band::Routine,
+                Band::Check,
+                Band::Read,
+                Band::Inert
+            ]
+        );
+
+        apply(&mut s, &press(KeyCode::Char('j')));
+        assert_eq!(s.scroll, 0, "j at the live edge stays there");
+        apply(&mut s, &press(KeyCode::Char('k')));
+        apply(&mut s, &press(KeyCode::PageUp));
+        assert_eq!(s.scroll, 11);
+        apply(&mut s, &press(KeyCode::End));
+        assert_eq!(s.scroll, 0);
+
+        apply(&mut s, &press(KeyCode::Char('p')));
+        assert!(s.paused);
+        ingest(&mut s, event("print(1)\n", "late.py", 0));
+        assert_eq!(s.events.len(), 3, "paused: counted, not shown");
+        assert_eq!(s.stats.count, 4);
+
+        let count = s.stats.count;
+        apply(&mut s, &press(KeyCode::Char('c')));
+        assert!(s.events.is_empty());
+        assert_eq!(s.stats.count, count, "clearing the view keeps the totals");
+    }
+
+    #[test]
+    fn a_key_release_does_nothing() {
+        let mut s = state(sample());
+        let release = TermEvent::Key(KeyEvent {
+            code: KeyCode::Char('p'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        });
+        assert_eq!(apply(&mut s, &release), Action::Continue);
+        assert!(!s.paused);
+        let quit_release = TermEvent::Key(KeyEvent {
+            code: KeyCode::Char('q'),
+            modifiers: KeyModifiers::NONE,
+            kind: KeyEventKind::Release,
+            state: KeyEventState::NONE,
+        });
+        assert_eq!(apply(&mut s, &quit_release), Action::Continue);
+    }
 }

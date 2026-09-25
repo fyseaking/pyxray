@@ -20,3 +20,6 @@ pyxray-render.workspace = true
 serde_json.workspace = true
 ratatui = { version = "0.30", features = ["crossterm"] }
 crossterm = "0.29"
+
+[dev-dependencies]
+insta.workspace = true

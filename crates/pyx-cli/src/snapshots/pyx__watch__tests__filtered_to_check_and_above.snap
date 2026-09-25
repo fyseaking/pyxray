@@ -1,0 +1,12 @@
+---
+source: crates/pyx-cli/src/watch.rs
+expression: "text(&s, 80, 8)"
+---
+ pyxray watch   3 snippets  |  2.1/min  |  1 flagged                 feed.jsonl
+  risk .._
+   seen        #>X ~#e ! +?t= .x  fs | world | eval | work | out
+--------------------------------------------------------------------------------
+   5s ##   30 ... .$. . .... ..  runs `rm -rf build`                   shell.py
+               L2 shell rm -rf build  runs a command through the shell; recurs~
+
+ live | 2 shown | check it and above  q quit
