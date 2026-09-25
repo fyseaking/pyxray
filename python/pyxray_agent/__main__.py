@@ -14,6 +14,11 @@ from . import extract as extract_python
 
 
 def main(argv: list[str] | None = None) -> int:
+    args_in = list(sys.argv[1:] if argv is None else argv)
+    if args_in[:1] == ["shim"]:
+        from .shim import main as shim_main
+
+        return shim_main(args_in[1:])
     parser = argparse.ArgumentParser(
         prog="python -m pyxray_agent",
         description="See what a Python snippet will do before you run it.",
@@ -30,7 +35,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--command", action="store_true",
                         help="treat the input as a shell command and find the Python in it")
     parser.add_argument("--list", action="store_true", help="list themes and layouts")
-    args = parser.parse_args(argv)
+    parser.epilog = "pyxray-agent shim install|uninstall|where — the python.exe shim; see --help there"
+    args = parser.parse_args(args_in)
 
     if args.list:
         print(f"backend: {backend()}\n")

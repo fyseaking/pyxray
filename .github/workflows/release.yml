@@ -39,9 +39,9 @@ jobs:
         shell: bash
         run: |
           if [ "${{ matrix.cross }}" = "true" ]; then
-            cross build --release -p pyx-cli --target ${{ matrix.target }}
+            cross build --release -p pyx-cli -p pyx-shim --target ${{ matrix.target }}
           else
-            cargo build --release -p pyx-cli --target ${{ matrix.target }}
+            cargo build --release -p pyx-cli -p pyx-shim --target ${{ matrix.target }}
           fi
       - name: package
         shell: bash
@@ -56,8 +56,10 @@ jobs:
           else
             tar -C "$(dirname $src)" -czf dist/$name.tar.gz $exe
           fi
-          # The wheel job bundles the binary for its own platform.
-          mkdir -p bin && cp $src bin/
+          # The wheel job bundles the binaries for its own platform: pyx, and
+          # the shim `pyxray-agent shim install` copies into place.
+          shim=pyx-shim; [ "${{ runner.os }}" = Windows ] && shim=pyx-shim.exe
+          mkdir -p bin && cp $src target/${{ matrix.target }}/release/$shim bin/
       - uses: actions/upload-artifact@v4
         with:
           name: archive-${{ matrix.target }}
@@ -91,7 +93,7 @@ jobs:
           path: python/pyxray_agent/bin
       - name: make the bundled binary executable
         if: runner.os != 'Windows'
-        run: chmod +x python/pyxray_agent/bin/pyx
+        run: chmod +x python/pyxray_agent/bin/pyx python/pyxray_agent/bin/pyx-shim
       # maturin skips gitignored files even when `include` names them, and
       # bin/ is ignored so a local build never commits a binary. Un-ignore it
       # here, where putting the binary there is the whole point.

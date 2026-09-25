@@ -75,7 +75,7 @@ jobs:
       - name: build the extension into the active Python
         run: python -m pip install -e . --no-build-isolation
       - name: build the binary (for the fallback backend)
-        run: cargo build --release -p pyx-cli
+        run: cargo build --release -p pyx-cli -p pyx-shim
       - name: pytest, extension backend
         run: python -m pytest python/tests -q
       - name: pytest, binary backend

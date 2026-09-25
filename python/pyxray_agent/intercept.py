@@ -219,16 +219,27 @@ def _tty_prompt(prompt: str) -> str | None:
 
 
 def should_run(event: dict[str, Any]) -> bool:
-    """Apply the gate, then the confirmation prompt. Both are opt-in."""
+    """Apply the gate and the policy, then the confirmation prompt.
+
+    The verdict is the same one every harness hook gives (see
+    :mod:`pyxray_agent.verdict`): ``deny`` never runs; ``ask`` runs only after
+    a yes at the terminal with ``PYXRAY_CONFIRM=1``, and is refused
+    otherwise — there is nobody else to ask; ``allow`` runs, after the
+    prompt if ``PYXRAY_CONFIRM=1``.
+    """
+    from .verdict import Findings, Settings, Snippet, judge
+
     risk = int(event.get("risk", 0))
-    ceiling = gate()
-    if ceiling is not None and risk > ceiling:
-        worst = event.get("synopsis") or "no summary"
-        print(f"pyxray: refusing to run — risk {risk} is over the gate of "
-              f"{ceiling} ({worst})", file=sys.stderr)
+    found = Findings(tool="shim", snippets=[Snippet(source="", label="", event=event)])
+    verdict = judge(found, Settings.from_env())
+    confirm = os.environ.get("PYXRAY_CONFIRM") == "1"
+    if verdict.decision == "deny" or (verdict.decision == "ask" and not confirm):
+        reason = verdict.reason.removeprefix("pyxray: ")
+        print(f"pyxray: refusing to run — {reason}", file=sys.stderr)
         return False
-    if os.environ.get("PYXRAY_CONFIRM") == "1":
-        answer = _tty_prompt(f"pyxray: risk {risk}. Run it? [y/N] ")
+    if confirm:
+        why = f" ({verdict.reason})" if verdict.decision == "ask" else ""
+        answer = _tty_prompt(f"pyxray: risk {risk}{why}. Run it? [y/N] ")
         if answer is None:
             print("pyxray: PYXRAY_CONFIRM needs a terminal; not running", file=sys.stderr)
             return False

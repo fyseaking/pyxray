@@ -240,3 +240,17 @@ if __name__ == "__main__":
                 failures += 1
                 print(f"FAIL  {name}: {exc!r}")
     raise SystemExit(1 if failures else 0)
+
+
+def test_shim_install_copies_the_executable(tmp_path):
+    from pyxray_agent import shim
+
+    if shim.find_shim() is None:
+        import pytest
+
+        pytest.skip("pyx-shim not built")
+    assert shim.main(["install", "--dir", str(tmp_path)]) == 0
+    for name in shim.NAMES:
+        assert (tmp_path / f"{name}{shim.EXE}").is_file()
+    assert shim.main(["uninstall", "--dir", str(tmp_path)]) == 0
+    assert not list(tmp_path.iterdir())

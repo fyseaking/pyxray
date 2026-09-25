@@ -5,6 +5,7 @@ members = [
     "crates/pyxray-render",
     "crates/pyx-cli",
     "crates/pyxray-py",
+    "crates/pyx-shim",
 ]
 
 [workspace.package]

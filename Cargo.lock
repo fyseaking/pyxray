@@ -1279,6 +1279,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyx-shim"
+version = "0.1.0"
+dependencies = [
+ "pyxray-core",
+ "serde_json",
+]
+
+[[package]]
 name = "pyxray-core"
 version = "0.1.0"
 dependencies = [

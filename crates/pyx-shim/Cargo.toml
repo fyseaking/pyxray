@@ -1,0 +1,19 @@
+[package]
+name = "pyx-shim"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+description = "A python.exe that shows what a script will do before it runs it"
+publish = false
+
+[[bin]]
+name = "pyx-shim"
+path = "src/main.rs"
+
+[dependencies]
+pyxray-core.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

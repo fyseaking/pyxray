@@ -169,6 +169,21 @@ or a virtualenv's own interpreter, which resolve to other files; the harness
 hook, below, sees all of those because it reads the command rather than
 standing in for the interpreter.
 
+On Windows — and anywhere you would rather not have a shell script in the
+way — the shim is a real executable instead:
+
+```sh
+pyxray-agent shim install     # python.exe + python3.exe in %LOCALAPPDATA%\pyxray\shim
+```
+
+`pyx-shim` reads its own command line as CPython does, analyses the script
+in-process (its local imports included), writes the feed row, applies the
+gate and any `.pyxray.toml`, then runs the real interpreter with the same
+arguments, streams and exit code; 3 means pyxray refused. `CreateProcess`
+finds it where it never finds a `.cmd`. It is installed, not activated: put
+its directory first on the *agent's* PATH (the command prints how), so what
+you run yourself is left alone.
+
 `shell/pyxray.sh` also defines a `python3` shell *function*, which is fine for
 what you type yourself but will not catch an agent: non-interactive shells
 never read your rc file, and many harnesses use `/bin/sh` rather than bash.
