@@ -16,12 +16,14 @@ pub mod extract;
 pub mod feed;
 pub mod follow;
 pub mod model;
+pub mod policy;
 pub mod record;
 pub mod source;
 
 pub use extract::{extract_all, extract_python, ExtractOpts, Extracted, Invocation};
 pub use follow::{FollowOpts, XrayOpts};
 pub use model::*;
+pub use policy::{Decision, Policy, PolicyVerdict};
 pub use record::{record, RecordOpts};
 
 use ruff_python_parser::{parse_unchecked, ParseOptions};

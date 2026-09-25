@@ -788,6 +788,29 @@ pub struct Event {
     /// from two runs of the same code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub digest: Option<String>,
+    /// What the policy in effect says about it, when there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<crate::policy::PolicyVerdict>,
+    /// How this run of a script differs from the last recorded run of the
+    /// same path, when the code changed in between.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub changed: Option<EventDiff>,
+}
+
+/// What a script can do now that its previous version could not (and the
+/// reverse). An agent that edits a script between runs changes what it does;
+/// this is the part worth a second look.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct EventDiff {
+    /// Effects this version has that the previous one did not.
+    pub added: Vec<Effect>,
+    pub removed: Vec<Effect>,
+    /// Targets named in this version's notes that the previous one's lacked.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub new_targets: Vec<String>,
+    pub risk_delta: i16,
+    /// One line: `+net, +process; new: api.x.com; risk +25`.
+    pub summary: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -845,6 +868,8 @@ impl Report {
             run: None,
             path: None,
             digest: None,
+            policy: None,
+            changed: None,
         }
     }
 

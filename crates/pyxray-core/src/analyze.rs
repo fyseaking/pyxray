@@ -73,6 +73,9 @@ pub struct Analyzer<'a> {
     /// Local name → the secret it holds or was derived from. Scoped like
     /// `consts`: a token read inside one function is not the module's.
     taint: HashMap<String, Taint>,
+    /// Local name → the literal path of the file it was opened on, so a
+    /// later `fh.write(...)` still says exactly which file.
+    opened: HashMap<String, String>,
     /// Current expression nesting, against [`MAX_EXPR_DEPTH`].
     expr_depth: u32,
     /// Only warn once per snippet about hitting a depth limit.
@@ -107,6 +110,7 @@ impl<'a> Analyzer<'a> {
             callable_aliases: HashMap::new(),
             star_modules: Vec::new(),
             taint: HashMap::new(),
+            opened: HashMap::new(),
             expr_depth: 0,
             depth_warned: false,
             imports: Vec::new(),
@@ -319,6 +323,7 @@ impl<'a> Analyzer<'a> {
             origins: self.origins.clone(),
             callable_aliases: self.callable_aliases.clone(),
             taint: self.taint.clone(),
+            opened: self.opened.clone(),
         }
     }
 
@@ -328,6 +333,7 @@ impl<'a> Analyzer<'a> {
         self.origins = state.origins;
         self.callable_aliases = state.callable_aliases;
         self.taint = state.taint;
+        self.opened = state.opened;
     }
 
     /// One warning per snippet when a depth limit is hit; the rest of the walk
@@ -905,6 +911,19 @@ impl<'a> Analyzer<'a> {
         });
     }
 
+    /// The literal path an `open(...)` expression opens, if it is one.
+    fn opened_path(&self, e: &Expr) -> Option<String> {
+        let Expr::Call(call) = e else { return None };
+        let opens = matches!(
+            self.resolve(&call.func).as_deref(),
+            Some("open" | "io.open" | "codecs.open" | "gzip.open" | "bz2.open" | "lzma.open")
+        );
+        if !opens {
+            return None;
+        }
+        self.resolved_arg(call, TargetArg::Named("file", 0))
+    }
+
     /// Record the exact target on the hit just pushed, for the effects a
     /// policy can name (paths, hosts, commands, variables) — not for `print`.
     fn set_resolved(&mut self, call: &ExprCall, spec: TargetArg) {
@@ -917,7 +936,16 @@ impl<'a> Analyzer<'a> {
         if !wanted {
             return;
         }
-        let resolved = self.resolved_arg(call, spec);
+        let resolved = self.resolved_arg(call, spec).or_else(|| {
+            // `fh.write(x)` is about the file `fh` was opened on.
+            let Expr::Attribute(attr) = &*call.func else {
+                return None;
+            };
+            match &*attr.value {
+                Expr::Name(n) => self.opened.get(n.id.as_str()).cloned(),
+                other => self.opened_path(other),
+            }
+        });
         if let Some(hit) = self.effects.last_mut() {
             hit.resolved = resolved;
         }
@@ -1454,6 +1482,14 @@ impl<'a> Analyzer<'a> {
             }
         }
         self.origins.insert(name.to_string(), origin_text.clone());
+        match self.opened_path(origin) {
+            Some(path) => {
+                self.opened.insert(name.to_string(), path);
+            }
+            None => {
+                self.opened.remove(name);
+            }
+        }
         // A name holds a secret while it was last bound to something derived
         // from one. `+=` only ever adds to what it held.
         match self.taint_of(origin) {
@@ -2269,6 +2305,7 @@ struct ScopeState {
     origins: HashMap<String, String>,
     callable_aliases: HashMap<String, String>,
     taint: HashMap<String, Taint>,
+    opened: HashMap<String, String>,
 }
 
 /// A secret a value holds or was computed from: where it was read, and what

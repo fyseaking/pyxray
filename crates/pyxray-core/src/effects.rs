@@ -811,6 +811,8 @@ pub const HAZARD_STRINGS: &[(&str, &str)] = &[
     ("apt-get", "changes system packages"),
     ("git push", "publishes to a remote"),
     ("--force", "forces an otherwise-refused operation"),
+    (".pyxray.toml", "changes pyxray's own policy"),
+    ("pyxray/policy.toml", "changes pyxray's own policy"),
 ];
 
 /// What a keyword argument's value looked like at the call site, in the only

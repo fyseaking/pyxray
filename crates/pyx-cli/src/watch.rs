@@ -544,6 +544,24 @@ mod tests {
     }
 
     #[test]
+    fn a_script_that_gained_a_capability_says_so() {
+        let mut e = event(
+            "import requests\nrequests.post('https://x.example')\n",
+            "job.py",
+            1_000,
+        );
+        e.changed = Some(pyxray_core::model::EventDiff {
+            added: vec![pyxray_core::model::Effect::Net],
+            removed: vec![],
+            new_targets: vec!["https://x.example".into()],
+            risk_delta: 10,
+            summary: "+net".into(),
+        });
+        let out = text(&state(vec![e]), 100, 8);
+        assert!(out.contains("+net") && out.contains("job.py"), "{out}");
+    }
+
+    #[test]
     fn scroll_is_clamped_to_the_oldest_row() {
         let mut s = state(sample());
         s.scroll = 999;

@@ -72,6 +72,13 @@ FEED
         --replay        start from the whole log, not just what arrives next
         --floor BAND    hide below inert | routine | check | read
 
+POLICY
+    pyx policy [FILE]   which policy files apply (PYXRAY_POLICY, your user
+                        file, the repository's .pyxray.toml), whether they
+                        parse, and — given FILE or a snippet on stdin — the
+                        verdict for it
+        --cwd DIR       look for the repository policy from DIR
+
 EXTRACT
     pyx extract         read a shell command on stdin; print a JSON array of
                         {source, label, path, segment} for every Python in it
@@ -105,6 +112,7 @@ pub enum Mode {
     Xray,
     Watch,
     Extract,
+    Policy,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -212,12 +220,12 @@ fn allowed(flag: &str) -> &'static [Mode] {
     match flag {
         "--dump" | "--replay" | "--floor" => &[Watch],
         "--no-files" | "--argv" => &[Extract],
-        "--cwd" => &[Extract, Xray],
+        "--cwd" => &[Extract, Xray, Policy],
         "--exec" | "--confirm" | "--gate" | "--emit" | "--feed" | "--source" | "--print-event"
         | "--run" | "--origin" | "--no-follow" | "--quiet" | "--tui" | "--contact-sheet"
         | "--check" | "--json" | "--stdin-is-command" | "--name" | "--code" | "--no-gutter"
         | "--depth" | "-l" | "--layout" => &[Xray],
-        _ => &[Xray, Watch, Extract],
+        _ => &[Xray, Watch, Extract, Policy],
     }
 }
 
@@ -236,6 +244,10 @@ pub fn parse<I: Iterator<Item = String>>(mut it: I) -> Result<Parsed, String> {
                 }
                 "extract" => {
                     a.mode = Mode::Extract;
+                    continue;
+                }
+                "policy" => {
+                    a.mode = Mode::Policy;
                     continue;
                 }
                 _ => {}
@@ -389,6 +401,7 @@ pub fn parse<I: Iterator<Item = String>>(mut it: I) -> Result<Parsed, String> {
             let where_ = match ok {
                 [Mode::Watch] => "pyx watch",
                 [Mode::Extract] => "pyx extract",
+                [Mode::Policy] => "pyx policy",
                 _ => "plain pyx",
             };
             return Err(format!("{flag} only makes sense with {where_}"));

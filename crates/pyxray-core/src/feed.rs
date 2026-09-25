@@ -215,6 +215,25 @@ fn head_bytes(path: &Path) -> Vec<u8> {
     buf
 }
 
+/// The most recent event in the log for the script at `path`, looking back
+/// through at most the last 512 KiB — a diff against a run from last week is
+/// not what anybody watching an agent wants.
+pub fn previous_for(log: &Path, path: &str) -> Option<Event> {
+    use std::io::{Read, Seek, SeekFrom};
+    const WINDOW: u64 = 512 << 10;
+    let mut file = std::fs::File::open(log).ok()?;
+    let len = file.metadata().ok()?.len();
+    let start = len.saturating_sub(WINDOW);
+    file.seek(SeekFrom::Start(start)).ok()?;
+    let mut buf = Vec::new();
+    file.read_to_end(&mut buf).ok()?;
+    let text = String::from_utf8_lossy(&buf);
+    text.lines()
+        .rev()
+        .filter_map(parse_line)
+        .find(|e| e.path.as_deref() == Some(path))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

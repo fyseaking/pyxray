@@ -362,3 +362,53 @@ def test_following_can_be_switched_off(env, tmp_path):
     payload = {"tool_name": "Bash", "cwd": str(tmp_path), "tool_input": {"command": "python3 main.py"}}
     run_hook("claude", "pre", payload, PYXRAY_FOLLOW="0")
     assert rows(env)[0]["risk"] < 30
+
+
+# --------------------------------------------------------------------------- policy
+
+
+POLICY = """
+[[rule]]
+effect = "net"
+hosts = ["pypi.org"]
+decision = "allow"
+
+[[rule]]
+effect = "net"
+decision = "deny"
+reason = "only pypi from this repo"
+"""
+
+
+def test_a_repo_policy_denies_through_every_harness(env, tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".pyxray.toml").write_text(POLICY)
+    monkeypatch.delenv("PYXRAY_POLICY", raising=False)
+    monkeypatch.setenv("PYXRAY_POLICY_HOME", str(tmp_path / "no-user-policy"))
+    bad = "python3 -c \"import requests; requests.get('https://evil.example/x')\""
+    good = "python3 -c \"import requests; requests.get('https://pypi.org/simple')\""
+    for harness, make in PRE.items():
+        payload = make(bad)
+        payload["cwd"] = str(tmp_path)
+        out = json.loads(run_hook(harness, "pre", payload).stdout)
+        text = json.dumps(out)
+        assert "only pypi" in text, (harness, out)
+        if harness == "cursor":
+            assert out["permission"] == "deny"
+        elif harness == "gemini":
+            assert out["decision"] == "deny"
+        else:
+            assert out["hookSpecificOutput"]["permissionDecision"] == "deny"
+        payload = make(good)
+        payload["cwd"] = str(tmp_path)
+        proc = run_hook(harness, "pre", payload)
+        assert (json.loads(proc.stdout) == {"permission": "allow"}) if harness == "cursor" else proc.stdout == ""
+    assert all(r.get("policy") for r in rows(env))
+
+
+def test_policy_off(env, tmp_path, monkeypatch):
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".pyxray.toml").write_text(POLICY)
+    payload = PRE["claude"]("python3 -c \"import requests; requests.get('https://evil.example')\"")
+    payload["cwd"] = str(tmp_path)
+    assert run_hook("claude", "pre", payload, PYXRAY_POLICY="off").stdout == ""

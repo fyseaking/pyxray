@@ -257,7 +257,81 @@ sh`, `sudo`) escalate whatever they are attached to — but only things that
 touch the world, so `print("run: pip install foo")` stays inert.
 
 The risk score is driven by severity and by *combinations* — fetching and then
-executing scores higher than doing either twice.
+executing scores higher than doing either twice. `pyxray_agent.analyze` and
+`pyx --format json` carry the terms it is the sum of, each with its reason.
+
+**Secrets are followed, not just noticed.** A secret-named environment
+variable, the keyring, or a credential file (`~/.ssh/*`, `~/.aws/credentials`,
+`.env`, `.netrc`, `.pypirc`, `.kube/config`…) read into a name is tracked
+through f-strings, dicts, `headers["Authorization"] = tok`, `base64`,
+`.encode()` and the snippet's own helpers, until it reaches a call. On a
+network call that is an **exfiltration** flow — Caution and +25 for a key
+file, Notable and +10 for an env token (usually going to its own API; a
+policy can say otherwise); into a command line or onto disk, a flow of its
+own. What an authenticated request *returns* is not the token, and
+`len(tok)` is a number.
+
+**Local imports are followed.** Given the script's path (a hook reading
+`python3 main.py`, the shim, `pyx main.py`), the modules it imports from its
+own directory are analysed too — package `__init__`s, `from pkg import mod`,
+relative imports inside packages — and what the snippet actually reaches
+counts: module-level code, and the functions and classes it uses. A helper
+nobody calls is counted but not scored. Nothing outside the script's
+directory is read, symlinks included; `--no-follow` or `PYXRAY_FOLLOW=0` turn
+it off.
+
+**A script that changes between runs says what changed.** Each event carries
+the script's path and a digest; when a new version can do something the last
+recorded run of that path could not, the event says `+net`, the new target
+and the change in risk, `pyx watch` shows it beside the name, and the harness
+note tells the model.
+
+### Policy
+
+One number is a blunt instrument. `.pyxray.toml` says, per effect and per
+path, host, command or variable, what may run, what must be asked about and
+what must not run:
+
+```toml
+version = 1
+default = "allow"            # when no rule matches
+
+[[rule]]                     # first match wins
+effect = "fs_write"
+paths = ["{repo}/**", "/tmp/**"]
+decision = "allow"
+
+[[rule]]
+effect = "fs_write"
+decision = "ask"
+
+[[rule]]
+effect = "net"
+hosts = ["pypi.org", "*.pythonhosted.org", "api.github.com"]
+decision = "allow"
+
+[[rule]]
+effect = "net"
+decision = "ask"
+
+[[rule]]
+flow = "exfiltration"
+decision = "deny"
+reason = "no secrets leave this machine"
+```
+
+It applies to every harness, the shim and `pyx`: Claude Code and Cursor get
+"ask" as a prompt, Hermes as its approval dialog; Codex and Gemini, which
+cannot ask, refuse with the reason. Two rules keep it honest. A constrained
+rule matches only a target the analyser knows exactly — a URL assembled at
+runtime never matches an allow-list, it falls through. And the repository's
+`.pyxray.toml` (the agent can write that file) can only make your own policy
+stricter: yours lives at `~/.config/pyxray/policy.toml`
+(`%APPDATA%\pyxray\policy.toml` on Windows) and wins ties unless it says
+`trust_repo_policy = true`. `PYXRAY_POLICY=path` uses one file instead,
+`PYXRAY_POLICY=off` none; `pyx policy [FILE]` shows which files apply and the
+verdict for a snippet. A policy that fails to parse asks rather than allowing
+everything or blocking everything.
 
 The **band** is what the compact renders show, and it asks severity first, not
 the score:
@@ -281,8 +355,9 @@ who does not see the hue.
 
 - It does not run anything, so anything decided at runtime is invisible to it.
   `getattr(os, "rem" + "ove")` will not be caught.
-- It does not follow imports. A call into another module of your own is a call
-  into a black box.
+- It follows local imports from the script's own directory, not installed
+  packages: a call into a library is judged by the library's name, not its
+  code.
 - It cannot analyse what it never sees. A hook reads the command an agent
   runs; `python3 -m somemodule` names code that is not in the command, and a
   `curl … | python3` arrives as a pipe from the network. Both are recorded

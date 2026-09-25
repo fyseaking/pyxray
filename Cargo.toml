@@ -27,6 +27,7 @@ ruff_source_file = "0.0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 insta = { version = "1.43", features = ["json"] }
+toml = { version = "0.8", default-features = false, features = ["parse"] }
 
 [profile.release]
 opt-level = 3

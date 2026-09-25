@@ -67,6 +67,7 @@ fn run() -> Result<ExitCode, String> {
             return Ok(ExitCode::SUCCESS);
         }
         Mode::Extract => return run_extract(&a),
+        Mode::Policy => return run_policy(&a),
         Mode::Xray => {}
     }
 
@@ -131,6 +132,8 @@ fn run() -> Result<ExitCode, String> {
                 // `--print-event` alone analyses and reports; only `--emit`
                 // writes the log.
                 write: a.emit,
+                cwd: a.cwd.clone().map(std::path::PathBuf::from),
+                policy: true,
             },
         );
         let mut value = serde_json::to_value(&event).map_err(|e| e.to_string())?;
@@ -248,6 +251,75 @@ fn run_extract(a: &args::Args) -> Result<ExitCode, String> {
     let found = extract::extract_all(&buf, &opts);
     let text = serde_json::to_string(&found).map_err(|e| e.to_string())?;
     write_out(a.out.as_deref(), &format!("{text}\n")).map(|_| ExitCode::SUCCESS)
+}
+
+fn run_policy(a: &args::Args) -> Result<ExitCode, String> {
+    use pyxray_core::policy::{user_policy_path, Policy};
+    let file = a.file.clone().filter(|p| p != "-");
+    let dir = a
+        .cwd
+        .clone()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            file.as_deref()
+                .and_then(|f| std::path::Path::new(f).parent().map(|p| p.to_path_buf()))
+                .filter(|p| !p.as_os_str().is_empty())
+        })
+        .or_else(|| std::env::current_dir().ok());
+    let policy = Policy::discover(dir.as_deref());
+    let mut out = String::new();
+    match std::env::var("PYXRAY_POLICY") {
+        Ok(v) if !v.trim().is_empty() => out.push_str(&format!("PYXRAY_POLICY={v}\n")),
+        _ => {}
+    }
+    if policy.is_empty() {
+        out.push_str("no policy applies");
+        if let Some(user) = user_policy_path() {
+            out.push_str(&format!(" (your user file would be {})", user.display()));
+        }
+        out.push('\n');
+    }
+    for (path, state) in policy.files() {
+        match state {
+            Ok(n) => out.push_str(&format!("{path}  {n} rule(s)\n")),
+            Err(why) => out.push_str(&format!("{path}  ERROR {why}\n")),
+        }
+    }
+    let snippet = match &file {
+        Some(path) => Some((
+            std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?,
+            short_name(path),
+        )),
+        None if !std::io::stdin().is_terminal() => {
+            let mut buf = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buf)
+                .map_err(|e| format!("stdin: {e}"))?;
+            (!buf.trim().is_empty()).then(|| (buf, "<stdin>".to_string()))
+        }
+        None => None,
+    };
+    if let Some((source, name)) = snippet {
+        let report = xray_guarded_with(
+            &source,
+            &name,
+            &XrayOpts {
+                origin: file.map(std::path::PathBuf::from),
+                cwd: dir.clone(),
+                follow: FollowOpts::default(),
+            },
+        );
+        match policy.evaluate(&report, dir.as_deref()) {
+            Some(v) => out.push_str(&format!(
+                "{name}: {} ({}) — {}\n",
+                v.decision.word(),
+                v.rule,
+                v.reason
+            )),
+            None => out.push_str(&format!("{name}: no policy, nothing to decide\n")),
+        }
+    }
+    write_out(a.out.as_deref(), &out).map(|_| ExitCode::SUCCESS)
 }
 
 fn read_input(a: &args::Args) -> Result<(String, String), String> {

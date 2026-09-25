@@ -148,7 +148,22 @@ pub fn row(buf: &mut Buffer, a: Rect, event: &Event, now_ms: u64, t: &Theme, o: 
 
     let name = fit(&event.name, (a.width / 5).max(8), t.gl.ellipsis);
     let blocked = if event.blocked { " blocked" } else { "" };
-    let tail_w = width(&name) + width(blocked) + 2;
+    // A script that can do something new since its last run says so, in the
+    // tail beside its name: `+net`. The detail is in the event.
+    let changed = event
+        .changed
+        .as_ref()
+        .filter(|d| !d.added.is_empty())
+        .map(|d| {
+            d.added
+                .iter()
+                .map(|e| format!("+{}", e.id()))
+                .collect::<Vec<_>>()
+                .join(" ")
+                + " "
+        })
+        .unwrap_or_default();
+    let tail_w = width(&name) + width(blocked) + width(&changed) + 2;
     let room = a.right().saturating_sub(x).saturating_sub(tail_w);
 
     let text = t.localise(&event.synopsis);
@@ -172,6 +187,9 @@ pub fn row(buf: &mut Buffer, a: Rect, event: &Event, now_ms: u64, t: &Theme, o: 
     );
 
     let mut tail: Vec<(&str, Style)> = Vec::new();
+    if !changed.is_empty() {
+        tail.push((changed.as_str(), Style::default().fg(t.pal.warn)));
+    }
     if event.blocked {
         tail.push((
             "blocked ",

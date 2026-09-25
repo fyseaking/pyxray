@@ -195,6 +195,8 @@ fn look(
                 origin: origin.map(std::path::PathBuf::from),
                 feed: path.map(std::path::PathBuf::from),
                 write: record,
+                cwd: cwd.map(std::path::PathBuf::from),
+                policy: true,
             },
         );
 
