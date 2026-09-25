@@ -36,8 +36,11 @@ agent's `sh -c`, a Makefile, and a `subprocess.run` deep inside some library.
 
 | | how | notes |
 |---|---|---|
-| [Claude Code / Claude desktop](claude-code/) | plugin (`/plugin marketplace add adukhan99/pyxray`), or a `PreToolUse` hook in `settings.json` | `Bash` commands and `NotebookEdit` code cells; scripts are read relative to the call's `cwd` |
+| [Claude Code / Claude desktop](claude-code/) | plugin (`/plugin marketplace add adukhan99/pyxray`), or a `PreToolUse` hook in `settings.json` | `Bash` commands and `NotebookEdit` code cells; scripts are read relative to the call's `cwd`; a `PostToolUse` note tells the model what a risky call just did |
 | [Hermes CLI / Hermes Desktop](hermes/) | native plugin (`hermes plugins install adukhan99/pyxray/integrations/hermes`), with a desktop pane | `terminal` and `execute_code`; verdict appended to the tool result, over-gate calls go to the approval prompt |
+| [Codex CLI](codex/) | `python -m pyxray_agent.install codex --apply` (`~/.codex/hooks.json`) | `PreToolUse` on `Bash`/`exec_command`; over the gate is refused (Codex can't ask) |
+| [Gemini CLI](gemini/) | `python -m pyxray_agent.install gemini --apply` (`~/.gemini/settings.json`) | `BeforeTool`/`AfterTool` on `run_shell_command`; the model gets a note after risky calls |
+| [Cursor](cursor/) | `python -m pyxray_agent.install cursor --apply` (`~/.cursor/hooks.json`) | `beforeShellExecution` asks over the gate; always answers, since Cursor reads silence as "deny" |
 | [OpenCode](opencode/) | plugin on `tool.execute.before` | blocks by throwing |
 | anything else | [PATH shim](shim/) | no API needed |
 

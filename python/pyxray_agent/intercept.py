@@ -51,9 +51,9 @@ Environment
 
 from __future__ import annotations
 
-import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -139,7 +139,15 @@ def draw_target() -> Any:
         return None
 
 
-def look(code: str, name: str = "<stdin>", source: str = "shim") -> dict[str, Any]:
+def look(
+    code: str,
+    name: str = "<stdin>",
+    source: str = "shim",
+    *,
+    record: bool = True,
+    origin: str | None = None,
+    run: str | None = None,
+) -> dict[str, Any]:
     """Record a snippet, and draw it if there is somewhere to draw.
 
     Returns the feed event: ``risk``, ``band``, ``synopsis``, ``notes`` and the
@@ -155,10 +163,13 @@ def look(code: str, name: str = "<stdin>", source: str = "shim") -> dict[str, An
     if minimum and len(code.splitlines()) < minimum:
         return dict(INERT)
 
-    stream = draw_target()
+    # A second look at a call already recorded draws nothing either: whoever
+    # was watching saw it the first time.
+    stream = draw_target() if record else None
     kwargs = dict(
         name=name,
         source=source,
+        record=record,
         path=os.environ.get("PYXRAY_LOG") or None,
         draw=stream is not None,
         theme=os.environ.get("PYXRAY_THEME", "blueprint"),
@@ -167,6 +178,10 @@ def look(code: str, name: str = "<stdin>", source: str = "shim") -> dict[str, An
         width=_width(),
         format="ansi",
     )
+    if origin:
+        kwargs["origin"] = origin
+    if run:
+        kwargs["run"] = run
     try:
         event, rendered = engine().look(code, **kwargs)
     except Exception as exc:  # noqa: BLE001 — the observer must not break the observed
@@ -289,7 +304,7 @@ def _run_wrapped(argv: list[str]) -> int:
 CODE_TOOLS = {"execute_code", "python", "run_python", "ipython", "code_interpreter",
               "python_tool", "jupyter", "notebookedit", "python_repl", "execute_python"}
 #: Tool names whose arguments carry a shell command that might contain Python.
-SHELL_TOOLS = {"bash", "terminal", "shell", "run_command", "execute_command", "sh",
+SHELL_TOOLS = {"exec_command", "bash", "terminal", "shell", "run_command", "execute_command", "sh",
                "bashtool", "run_terminal_cmd", "execute_bash", "shell_command",
                "run_shell_command", "exec", "execute"}
 #: Tools that carry text that is not going to be run: file edits, searches.
@@ -327,13 +342,23 @@ def _looks_like_python(text: str) -> bool:
 
 
 def python_in_payload(payload: dict[str, Any]) -> list[tuple[str, str]]:
+    """Every piece of Python inside a tool-call payload, as ``(source, label)``.
+
+    See :func:`snippets_in_payload`, which also says where each piece came
+    from; this is the older shape, kept for callers that only want the code.
+    """
+    return [(s["source"], s["label"]) for s in snippets_in_payload(payload)]
+
+
+def snippets_in_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     """Every piece of Python inside a tool-call payload, whatever its shape.
 
     Handles both kinds of tool a harness might offer: one that takes Python
     directly, and one that takes a shell command with Python wrapped inside it
     — a script path (read relative to the payload's ``cwd``), a heredoc, a
-    ``-c`` one-liner, a pipe, a ``bash -c``. Returns ``(source, label)``
-    pairs in command order; an empty list means "nothing to look at".
+    ``-c`` one-liner, a pipe, a ``bash -c``. Returns ``{source, label, path}``
+    dicts in command order, ``path`` being the script file when there was
+    one; an empty list means "nothing to look at".
     """
     tool = (payload.get("tool_name") or payload.get("tool") or "").strip()
     args = payload.get("tool_input") or payload.get("args") or payload.get("input") or {}
@@ -356,7 +381,7 @@ def python_in_payload(payload: dict[str, Any]) -> list[tuple[str, str]]:
             return []
         value = args.get("new_source") or args.get("source")
         if isinstance(value, str) and value.strip():
-            return [(value, "notebook cell")]
+            return [{"source": value, "label": "notebook cell", "path": None}]
         return []
 
     if takes_code or unknown:
@@ -364,14 +389,17 @@ def python_in_payload(payload: dict[str, Any]) -> list[tuple[str, str]]:
             value = args.get(field)
             if isinstance(value, str) and value.strip():
                 if takes_code or _looks_like_python(value):
-                    return [(value, tool or "code")]
+                    return [{"source": value, "label": tool or "code", "path": None}]
 
     if takes_shell or unknown:
         cwd = payload.get("cwd")
         for field in SHELL_KEYS:
             value = args.get(field)
             if isinstance(value, list):
-                value = " ".join(str(v) for v in value)
+                # An argv array (Codex sends ["bash", "-lc", "python3 …"]):
+                # quote it back into one command, or the words inside the
+                # -lc string fall apart.
+                value = shlex.join(str(v) for v in value)
             if not (isinstance(value, str) and value.strip()):
                 continue
             try:
@@ -379,55 +407,28 @@ def python_in_payload(payload: dict[str, Any]) -> list[tuple[str, str]]:
             except Exception as exc:  # noqa: BLE001
                 _debug(f"could not extract from {field!r}: {exc}")
                 found = []
-            items = [(f["source"], f["label"]) for f in found if f.get("source", "").strip()]
+            items = [
+                {"source": f["source"], "label": f["label"], "path": f.get("path")}
+                for f in found
+                if f.get("source", "").strip()
+            ]
             if items:
                 return items
     return []
 
 
 def _run_hook() -> int:
-    """A PreToolUse-shaped hook. Records; asks the harness to stop only if gated.
+    """``--hook``: the Claude Code dialect of :mod:`pyxray_agent.hook`.
 
-    The wire format is Claude Code's, which Hermes also accepts, so one script
-    serves both. Anything it does not recognise passes through untouched, and
-    nothing that goes wrong in here can fail the tool call: the exit code is
-    0 whatever happens.
+    Kept so hooks installed before the harness adapters existed keep working;
+    it is exactly ``python -m pyxray_agent.hook claude pre``.
     """
-    try:
-        payload = json.load(sys.stdin)
-    except (json.JSONDecodeError, ValueError, OSError):
-        return 0
-    if not isinstance(payload, dict):
-        return 0
-    found = python_in_payload(payload)
-    if not found:
-        return 0
+    from .hook import main as hook_main
 
-    session = str(payload.get("session_id") or "")[:8]
-    source = payload.get("hook_source") or os.environ.get("PYXRAY_SOURCE") or "hook"
-    origin = f"{source}{':' + session if session else ''}"
-    worst: dict[str, Any] | None = None
-    for code, label in found:
-        event = look(code, label, source=origin)
-        if worst is None or int(event.get("risk", 0)) > int(worst.get("risk", 0)):
-            worst = event
-
-    ceiling = gate()
-    risk = int((worst or {}).get("risk", 0))
-    if ceiling is not None and risk > ceiling and worst is not None:
-        reason = (f"pyxray: risk {risk} is over the gate of {ceiling} — "
-                  f"{worst.get('synopsis', '')}")
-        json.dump({
-            "decision": "block",
-            "reason": reason,
-            "hookSpecificOutput": {
-                "hookEventName": "PreToolUse",
-                "permissionDecision": "ask",
-                "permissionDecisionReason": reason,
-            },
-        }, sys.stdout)
-        sys.stdout.flush()
-    return 0
+    # Rows from this entry point have always been labelled `hook`; the feed's
+    # readers and people's filters expect it.
+    os.environ.setdefault("PYXRAY_SOURCE", "hook")
+    return hook_main(["claude", "pre"])
 
 
 def main(argv: list[str] | None = None) -> int:

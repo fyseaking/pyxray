@@ -1,4 +1,6 @@
-"""The hook, in Python: find pyxray, run the interceptor, never fail.
+"""The hook, in Python: find pyxray, run it, never fail.
+
+    pyxray_hook.py [HARNESS [PHASE]]    see pyxray_agent.hook
 
 Exit 75 (EX_TEMPFAIL) tells the launcher "this interpreter cannot see pyxray,
 try another"; every other outcome is exit 0. Stdin is the harness payload.
@@ -32,11 +34,15 @@ def main():
         # hooks/ -> claude-code/ -> integrations/ -> the checkout
         _add_checkout(os.path.normpath(os.path.join(here, "..", "..", "..")))
     try:
-        from pyxray_agent.intercept import main as intercept
+        from pyxray_agent.hook import main as hook
     except ImportError:
         return 75
+    args = sys.argv[1:3] or ["claude", "pre"]
+    if args == ["claude", "pre"]:
+        # Rows from the Claude Code hook have always been labelled `hook`.
+        os.environ.setdefault("PYXRAY_SOURCE", "hook")
     try:
-        return intercept(["--hook"])
+        return hook(args)
     except BaseException:  # noqa: BLE001 — never fail the tool call
         return 0
 

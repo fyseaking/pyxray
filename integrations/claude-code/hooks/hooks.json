@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/pyxray-hook\"",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/pyxray-hook\" claude pre",
             "timeout": 5
           }
         ]
@@ -16,7 +16,19 @@
         "hooks": [
           {
             "type": "command",
-            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/pyxray-hook\"",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/pyxray-hook\" claude pre",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/pyxray-hook\" claude post",
             "timeout": 5
           }
         ]

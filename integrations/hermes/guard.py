@@ -6,7 +6,7 @@ is the thin layer that wires these functions into ``register(ctx)``.
 
 Flow for one tool call:
 
-    pre_tool_call  ── scan() ──▶ Findings ──▶ decide()  ─▶ approve / block / None
+    pre_tool_call  ── scan() ──▶ Any ──▶ decide()  ─▶ approve / block / None
                                     │
                                     └── remember() ─▶ transform_tool_result appends
                                                        format_block() to the result
@@ -25,14 +25,16 @@ import sys
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
 PLUGIN_ID = "pyxray"
 PLUGIN_DIR = Path(__file__).resolve().parent
 
-# Band order, least to most interesting. Mirrors pyxray-core's `Band`.
+# Band order, least to most interesting. The same as `pyxray_agent.verdict`,
+# repeated here (with `parse_gate`) because settings are read — for the
+# dashboard and for `/pyxray status` — even when there is no engine to import.
 BANDS = ("inert", "routine", "check", "read")
 BAND_WORDS = {"inert": "inert", "routine": "routine", "check": "check it", "read": "read it first"}
 
@@ -196,6 +198,10 @@ class Settings:
             max_cards = 40
         return cls(gate=gate, mode=mode, warn_from=warn, tools=tools or DEFAULT_TOOLS, cards=cards, max_cards=max_cards)
 
+    def core(self) -> Any:
+        """The harness-neutral half, as :class:`pyxray_agent.verdict.Settings`."""
+        return _verdict().Settings(gate=self.gate, hard=self.mode == "block", warn_from=self.warn_from)
+
 
 def config_getter() -> Callable[[str, Any], Any]:
     """A ``get(key, default)`` over ``plugins.entries.pyxray.settings`` for
@@ -254,44 +260,35 @@ def parse_gate(raw: Any) -> int | None:
 
 
 # --------------------------------------------------------------------------- scanning
+#
+# What counts as Python, how it is analysed and what the verdict is are the
+# same for every harness, and live in `pyxray_agent.verdict`. This file only
+# knows Hermes: which tools, where the settings are, and how Hermes spells
+# "ask the human" (`approve`) and "refuse" (`block`).
 
 
-@dataclass
-class Snippet:
-    source: str
-    label: str
-    event: dict[str, Any]
+def _verdict() -> Any:
+    """``pyxray_agent.verdict``, from wherever :func:`pyxray_module` found the package."""
+    pyxray_module()
+    from pyxray_agent import verdict  # type: ignore[import-not-found]
 
-    @property
-    def band(self) -> str:
-        return str(self.event.get("band") or "inert")
-
-    @property
-    def risk(self) -> int:
-        try:
-            return int(self.event.get("risk") or 0)
-        except (TypeError, ValueError):
-            return 0
+    return verdict
 
 
-@dataclass
-class Findings:
-    tool: str
-    snippets: list[Snippet] = field(default_factory=list)
-    error: str | None = None
+class _NoFindings:
+    """What :func:`scan` returns when there is no engine to scan with."""
 
-    @property
-    def worst(self) -> Snippet | None:
-        return max(self.snippets, key=lambda s: (s.risk, BANDS.index(s.band) if s.band in BANDS else 0), default=None)
-
-    @property
-    def empty(self) -> bool:
-        return not self.snippets
+    def __init__(self, tool: str, error: str | None = None) -> None:
+        self.tool = tool
+        self.snippets: list[Any] = []
+        self.error = error
+        self.worst = None
+        self.empty = True
 
 
-def _payload_for(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-    """Shape Hermes' ``(tool_name, args)`` like the hook payload ``python_in_payload`` reads."""
-    payload: dict[str, Any] = {"tool_name": tool_name, "tool_input": args}
+def _payload_for(tool_name: str, args: dict[str, Any], session: str = "") -> dict[str, Any]:
+    """Shape Hermes' ``(tool_name, args)`` like the hook payload the verdict module reads."""
+    payload: dict[str, Any] = {"tool_name": tool_name, "tool_input": args, "session_id": session}
     for key in ("cwd", "workdir", "working_directory"):
         if isinstance(args.get(key), str) and args[key]:
             payload["cwd"] = args[key]
@@ -299,118 +296,56 @@ def _payload_for(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def scan(tool_name: str, args: Any, settings: Settings, *, session: str = "") -> Findings:
+def scan(tool_name: str, args: Any, settings: Settings, *, session: str = "") -> Any:
     """Find and analyse every piece of Python a tool call would run.
 
-    Writes one feed row per snippet (through ``pyxray_agent.intercept.look``) and
-    returns the events. Never raises: a missing engine or a broken payload
-    gives an empty ``Findings`` with ``error`` set.
+    Writes one feed row per snippet and returns ``verdict.Any``. Never
+    raises: a missing engine or a broken payload gives empty findings with
+    ``error`` set.
     """
-    found = Findings(tool=tool_name)
     if tool_name not in settings.tools or not isinstance(args, dict):
-        return found
+        return _NoFindings(tool_name)
     if os.environ.get("PYXRAY_OFF") == "1":
-        return found
+        return _NoFindings(tool_name)
     try:
-        pyxray_module()
-        from pyxray_agent import intercept  # type: ignore[import-not-found]
+        verdict = _verdict()
     except EngineMissing as exc:
-        found.error = str(exc)
-        return found
-    try:
-        items = intercept.python_in_payload(_payload_for(tool_name, args))
-    except Exception as exc:  # noqa: BLE001
-        found.error = f"could not read the payload: {exc}"
-        return found
-    origin = f"hermes{':' + session[:8] if session else ''}"
-    for source, label in items:
-        try:
-            event = intercept.look(source, label, source=origin)
-        except Exception as exc:  # noqa: BLE001 — look() already swallows; belt and braces
-            event = {"risk": 0, "band": "inert", "synopsis": "", "notes": [], "error": str(exc)}
-        found.snippets.append(Snippet(source=source, label=label, event=event))
-    return found
+        return _NoFindings(tool_name, str(exc))
+    return verdict.scan_payload(_payload_for(tool_name, args, session), source="hermes")
 
 
 # --------------------------------------------------------------------------- deciding
 
 
-def decide(findings: Findings, settings: Settings) -> dict[str, Any] | None:
+def decide(findings: Any, settings: Settings) -> dict[str, Any] | None:
     """The ``pre_tool_call`` directive, if any.
 
-    Over the gate → ``approve`` (Hermes' human-approval prompt, the analogue of
-    Claude Code's ``permissionDecision: ask``) or ``block`` when configured.
-    ``rule_key`` lets the ``[a]lways`` answer at the prompt allow that band
-    from then on rather than every call individually.
+    The shared verdict's ``ask`` is Hermes' ``approve`` (the human-approval
+    prompt); ``deny`` is ``block``. ``rule_key`` lets the ``[a]lways`` answer
+    at the prompt allow that band from then on rather than every call.
     """
-    worst = findings.worst
-    if worst is None or settings.gate is None or worst.risk <= settings.gate:
+    if findings.empty:
         return None
-    reason = (
-        f"pyxray: risk {worst.risk} is over the gate of {settings.gate} "
-        f"({BAND_WORDS.get(worst.band, worst.band)}) — {worst.event.get('synopsis') or 'see notes'}"
-    )
-    notes = _note_lines(worst.event)
-    if notes:
-        reason += "\n" + "\n".join(notes)
-    if settings.mode == "block":
-        return {"action": "block", "message": reason + "\n\nTo run it anyway, raise or unset the pyxray gate."}
-    return {"action": "approve", "message": reason, "rule_key": f"pyxray:{worst.band}"}
+    v = _verdict().judge(findings, settings.core())
+    if v.decision == "allow":
+        return None
+    if v.decision == "deny":
+        return {"action": "block", "message": v.message + "\n\nTo run it anyway, raise or unset the pyxray gate."}
+    band = findings.worst.band if findings.worst is not None else "check"
+    return {"action": "approve", "message": v.message, "rule_key": f"pyxray:{band}"}
 
 
-def _note_lines(event: dict[str, Any], limit: int = 4) -> list[str]:
-    lines: list[str] = []
-    for note in (event.get("notes") or [])[:limit]:
-        if not isinstance(note, dict):
-            continue
-        verb = str(note.get("verb") or note.get("effect") or "").strip()
-        target = note.get("target")
-        line = note.get("line")
-        text = verb
-        if target:
-            text += f" {target}"
-        if extra := note.get("note"):
-            text += f" — {extra}"
-        if line:
-            text += f" (line {line})"
-        lines.append(f"  · {text}")
-    return lines
-
-
-def wants_warning(findings: Findings, settings: Settings) -> bool:
-    worst = findings.worst
-    if worst is None or settings.warn_from == "never":
+def wants_warning(findings: Any, settings: Settings) -> bool:
+    if findings.empty:
         return False
-    floor = BANDS.index(settings.warn_from) if settings.warn_from in BANDS else BANDS.index("check")
-    band = BANDS.index(worst.band) if worst.band in BANDS else 0
-    return band >= floor
+    return bool(_verdict().wants_warning(findings, settings.core()))
 
 
-def format_block(findings: Findings, settings: Settings) -> str:
-    """The Markdown that rides back to the model under the tool result.
-
-    Deliberately short: one verdict line, the named effects, and a sentence
-    telling the model what to do with it. The full picture is in the feed.
-    """
-    worst = findings.worst
-    if worst is None:
+def format_block(findings: Any, settings: Settings) -> str:
+    """The Markdown that rides back to the model under the tool result."""
+    if findings.empty:
         return ""
-    header = (
-        f"pyxray — {BAND_WORDS.get(worst.band, worst.band)} · risk {worst.risk}"
-        + (f" · {worst.event.get('synopsis')}" if worst.event.get("synopsis") else "")
-    )
-    lines = ["", "---", header]
-    if len(findings.snippets) > 1:
-        lines.append(f"({len(findings.snippets)} snippets in this call; worst shown: {worst.label})")
-    lines += _note_lines(worst.event)
-    if worst.band == "read":
-        lines.append(
-            "This already ran. If any of those effects was not what the user asked for, "
-            "say so now and do not repeat it; otherwise carry on."
-        )
-    elif settings.gate is not None:
-        lines.append(f"Under the gate of {settings.gate}; recorded for the operator.")
-    return "\n".join(lines)
+    return str(_verdict().context_text(findings, settings.core()))
 
 
 # --------------------------------------------------------------------------- remembering
@@ -434,12 +369,12 @@ class Recent:
     """
 
     def __init__(self, keep: int = 64) -> None:
-        self._by_key: OrderedDict[str, Findings] = OrderedDict()
-        self._order: list[Findings] = []
+        self._by_key: OrderedDict[str, Any] = OrderedDict()
+        self._order: list[Any] = []
         self._keep = keep
         self._lock = threading.Lock()
 
-    def remember(self, tool_name: str, args: Any, findings: Findings, tool_call_id: str = "") -> None:
+    def remember(self, tool_name: str, args: Any, findings: Any, tool_call_id: str = "") -> None:
         with self._lock:
             self._by_key[_key(tool_name, args, tool_call_id)] = findings
             while len(self._by_key) > self._keep:
@@ -448,7 +383,7 @@ class Recent:
                 self._order.append(findings)
                 del self._order[: -self._keep]
 
-    def take(self, tool_name: str, args: Any, tool_call_id: str = "") -> Findings | None:
+    def take(self, tool_name: str, args: Any, tool_call_id: str = "") -> Any | None:
         with self._lock:
             found = self._by_key.pop(_key(tool_name, args, tool_call_id), None)
             if found is None and not tool_call_id:
@@ -458,7 +393,7 @@ class Recent:
                 found = self._by_key.pop(_key(tool_name, args), None)
             return found
 
-    def last(self, n: int = 1) -> list[Findings]:
+    def last(self, n: int = 1) -> list[Any]:
         with self._lock:
             return list(self._order[-n:])[::-1]
 
@@ -484,7 +419,7 @@ def data_dir() -> Path:
         return path
 
 
-def write_card(findings: Findings, settings: Settings, *, now_ms: int | None = None) -> Path | None:
+def write_card(findings: Any, settings: Settings, *, now_ms: int | None = None) -> Path | None:
     """Render the worst snippet of a call to HTML for the desktop pane.
 
     ``recent.jsonl`` next to the cards is the index the dashboard reads:

@@ -2,11 +2,15 @@
 # pyxray's hook launcher — the one entry point every harness integration
 # points at.
 #
-# Reads a PreToolUse-shaped JSON payload on stdin, hands it to
-# hooks/pyxray_hook.py under whichever Python can import pyxray_agent, and writes a
-# block decision on stdout only if a gate is configured. Otherwise it prints
-# nothing. It always exits 0: a hook that fails would block the tool call,
-# and an observer that breaks somebody's work is worse than no observer.
+#   pyxray-hook [HARNESS [PHASE]]     HARNESS: claude (default), codex, gemini,
+#                                     cursor. PHASE: pre (default) or post.
+#
+# Reads the harness's hook payload on stdin, hands it to hooks/pyxray_hook.py
+# under whichever Python can import pyxray_agent, and passes that answer
+# through. It always exits 0: a hook that fails would block the tool call, and
+# an observer that breaks somebody's work is worse than no observer. Cursor
+# reads silence from a permission hook as a refusal, so when nothing could
+# run at all, a Cursor pre hook still gets an explicit allow.
 #
 # Where pyxray comes from, in order:
 #   $PYXRAY_ROOT      a checkout (its python/ directory is put on the path)
@@ -17,20 +21,18 @@
 # the Windows `py -3` launcher are tried in turn. PYXRAY_DEBUG=1 keeps stderr.
 
 here=$(cd -- "$(dirname -- "$0")" && pwd)
+harness=${1:-claude}
+phase=${2:-pre}
 payload=$(cat)
-
-if [ "${PYXRAY_DEBUG:-0}" = "1" ]; then
-    err=""
-else
-    err="2>/dev/null"
-fi
 
 try() {
     # 0 means the hook ran (whatever it decided). Anything else — 75
     # (EX_TEMPFAIL) from the script when pyxray is not importable, or an
     # interpreter that could not even start — means try the next one.
-    if printf '%s' "$payload" | eval "\"\$@\" \"$here/pyxray_hook.py\" $err"; then
-        exit 0
+    if [ "${PYXRAY_DEBUG:-0}" = "1" ]; then
+        printf '%s' "$payload" | "$@" "$here/pyxray_hook.py" "$harness" "$phase" && exit 0
+    else
+        printf '%s' "$payload" | "$@" "$here/pyxray_hook.py" "$harness" "$phase" 2>/dev/null && exit 0
     fi
     return 1
 }
@@ -45,5 +47,8 @@ for py in python3 python; do
 done
 if command -v py >/dev/null 2>&1; then
     try py -3
+fi
+if [ "$harness" = "cursor" ] && [ "$phase" = "pre" ]; then
+    printf '%s' '{"permission":"allow"}'
 fi
 exit 0

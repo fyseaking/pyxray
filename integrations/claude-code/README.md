@@ -65,7 +65,12 @@ pyx watch
 
 in a second terminal, and every snippet Claude runs lands there as one row.
 
-The hook prints nothing unless you set `PYXRAY_GATE`. When you do, anything
+After a `Bash` call, a `PostToolUse` hook adds a short note to the result
+when what just ran was `check it` or worse — the same note Hermes, Gemini CLI
+and Cursor get — so the model can say so if it was not what you asked for.
+`PYXRAY_WARN=read` raises that floor; `never` turns it off.
+
+The pre-tool hook prints nothing unless you set `PYXRAY_GATE`. When you do, anything
 above it comes back as `permissionDecision: "ask"` with the reason attached,
 so Claude prompts you rather than silently refusing — the model still sees
 why, and you still decide.

@@ -175,8 +175,9 @@ never read your rc file, and many harnesses use `/bin/sh` rather than bash.
 
 ### As a harness hook
 
-Per-harness setup lives in `integrations/`: Claude Code, Hermes, OpenCode, and
-a tmux pane recipe. Hermes gets a native plugin (`hermes plugins install
+Per-harness setup lives in `integrations/`: Claude Code, Hermes, Codex CLI,
+Gemini CLI, Cursor, OpenCode, and a tmux pane recipe. Codex, Gemini and Cursor
+install with `python -m pyxray_agent.install codex|gemini|cursor --apply`. Hermes gets a native plugin (`hermes plugins install
 adukhan99/pyxray/integrations/hermes`) with a pane in Hermes Desktop and the
 verdict appended to each tool result; the others end up calling the same
 thing —
