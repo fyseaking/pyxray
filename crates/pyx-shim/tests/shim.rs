@@ -229,3 +229,40 @@ fn with_no_real_python_it_says_so() {
     assert_eq!(out.status.code(), Some(127));
     let _ = Path::new(".");
 }
+
+#[test]
+fn an_audited_run_records_what_it_did_under_the_same_run_id() {
+    let s = need_python!("audit");
+    let out = s
+        .cmd()
+        .env("PYXRAY_AUDIT", "1")
+        .env_remove("PYXRAY_RUN")
+        .args([
+            "-c",
+            "import os; open('o.txt', 'w').write('x'); os.remove('o.txt')",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rows = s.rows();
+    let event = rows
+        .iter()
+        .find(|r| r.get("kind").is_none())
+        .expect("the prediction");
+    let observed = rows
+        .iter()
+        .find(|r| r["kind"] == "observed")
+        .expect("the observation");
+    assert_eq!(event["run"], observed["run"]);
+    let verbs: Vec<&str> = observed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| i["verb"].as_str().unwrap())
+        .collect();
+    assert!(verbs.contains(&"remove"), "{verbs:?}");
+}

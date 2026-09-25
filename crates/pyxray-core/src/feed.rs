@@ -110,12 +110,55 @@ pub fn read_all(path: &Path) -> std::io::Result<Vec<Event>> {
     Ok(out)
 }
 
+/// Every line of either kind currently in the log.
+pub fn read_all_lines(path: &Path) -> std::io::Result<Vec<FeedLine>> {
+    let file = match File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e),
+    };
+    Ok(BufReader::new(file)
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(|l| parse_any(&l))
+        .collect())
+}
+
 /// One feed line → one event, or nothing: a half-written line from a
 /// concurrent append is normal, and so is a line written by a newer build
 /// whose schema this one does not understand.
 pub fn parse_line(line: &str) -> Option<Event> {
     let event = serde_json::from_str::<Event>(line).ok()?;
     (event.schema <= crate::model::SCHEMA).then_some(event)
+}
+
+/// Either kind of feed line.
+#[derive(Clone, Debug)]
+pub enum FeedLine {
+    Event(Box<Event>),
+    Observed(crate::model::Observation),
+}
+
+/// One feed line of either kind — an event, or an observation from the
+/// runtime audit hook — or nothing.
+pub fn parse_any(line: &str) -> Option<FeedLine> {
+    if line.contains("\"kind\":\"observed\"") || line.contains("\"kind\": \"observed\"") {
+        let obs = serde_json::from_str::<crate::model::Observation>(line).ok()?;
+        return (obs.kind == "observed" && obs.schema <= crate::model::SCHEMA)
+            .then_some(FeedLine::Observed(obs));
+    }
+    parse_line(line).map(|e| FeedLine::Event(Box::new(e)))
+}
+
+/// Append one observation, the way [`append`] appends an event.
+pub fn append_observation(path: &Path, obs: &crate::model::Observation) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut line = serde_json::to_string(obs).map_err(std::io::Error::other)?;
+    line.push('\n');
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    file.write_all(line.as_bytes())
 }
 
 /// A cursor over a growing log, for tailing it.
@@ -154,6 +197,17 @@ impl Tail {
     /// Every whole event appended since the last call. A file that shrank was
     /// trimmed or replaced, so the cursor restarts from the beginning.
     pub fn poll(&mut self) -> Vec<Event> {
+        self.poll_lines()
+            .into_iter()
+            .filter_map(|l| match l {
+                FeedLine::Event(e) => Some(*e),
+                FeedLine::Observed(_) => None,
+            })
+            .collect()
+    }
+
+    /// Every whole line of either kind appended since the last call.
+    pub fn poll_lines(&mut self) -> Vec<FeedLine> {
         let Ok(mut file) = File::open(&self.path) else {
             return Vec::new();
         };
@@ -196,8 +250,8 @@ impl Tail {
             if piece.is_empty() {
                 continue;
             }
-            if let Some(event) = parse_line(piece) {
-                out.push(event);
+            if let Some(line) = parse_any(piece) {
+                out.push(line);
             }
         }
         out
@@ -306,5 +360,37 @@ mod tests {
         append(&path, &xray("print(2)", "b").event("test")).unwrap();
         assert_eq!(tail.poll().len(), 1);
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn observations_are_a_second_kind_of_line_old_readers_skip() {
+        let obs = r#"{"kind":"observed","schema":1,"ts":5,"run":"r1","pid":42,"name":"job.py","items":[{"effect":"net","verb":"connect","target":"1.2.3.4:443","count":2}],"truncated":false}"#;
+        assert!(parse_line(obs).is_none(), "an event reader must skip it");
+        match parse_any(obs) {
+            Some(FeedLine::Observed(o)) => {
+                assert_eq!(o.run, "r1");
+                assert_eq!(o.items[0].effect, crate::model::Effect::Net);
+            }
+            other => panic!("{other:?}"),
+        }
+        let event = serde_json::to_string(&crate::xray("x = 1\n", "t").event("t")).unwrap();
+        assert!(matches!(parse_any(&event), Some(FeedLine::Event(_))));
+
+        let dir = std::env::temp_dir().join(format!("pyxray-feed-obs-{}", std::process::id()));
+        let log = dir.join("feed.jsonl");
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut tail = Tail::at_start(&log);
+        append(&log, &crate::xray("x = 1\n", "t").event("t")).unwrap();
+        let o: crate::model::Observation = serde_json::from_str(obs).unwrap();
+        append_observation(&log, &o).unwrap();
+        let lines = tail.poll_lines();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(
+            read_all(&log).unwrap().len(),
+            1,
+            "read_all stays events-only"
+        );
+        assert_eq!(read_all_lines(&log).unwrap().len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

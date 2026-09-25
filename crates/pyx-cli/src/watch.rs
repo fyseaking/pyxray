@@ -6,15 +6,15 @@
 //! tool output. So the renders come here instead: a second pane, its own
 //! window, a tmux split — somewhere a person is watching and the model is not.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, IsTerminal, Stdout, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
 use crossterm::event::{self, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use crossterm::{cursor, execute, terminal};
-use pyxray_core::feed::{self, Tail};
-use pyxray_core::model::{Band, Event};
+use pyxray_core::feed::{self, FeedLine, Tail};
+use pyxray_core::model::{reconcile, Band, Event, Observation};
 use pyxray_render::export;
 use pyxray_render::feed as feedview;
 use pyxray_render::panels::Opts;
@@ -44,6 +44,8 @@ pub struct Options {
 
 struct State {
     events: VecDeque<Event>,
+    /// What audited runs actually did, by run id (`PYXRAY_AUDIT=1`).
+    observed: HashMap<String, Vec<Observation>>,
     stats: feedview::Stats,
     theme: usize,
     floor: Band,
@@ -57,6 +59,7 @@ struct State {
 pub fn run(o: Options) -> io::Result<()> {
     let mut state = State {
         events: VecDeque::new(),
+        observed: HashMap::new(),
         stats: feedview::Stats::default(),
         theme: THEMES.iter().position(|t| t.id == o.theme.id).unwrap_or(0),
         floor: o.floor,
@@ -72,9 +75,14 @@ pub fn run(o: Options) -> io::Result<()> {
     .join(o.theme.gl.sep);
 
     if o.dump {
-        for event in feed::read_all(&o.path).unwrap_or_default() {
-            state.stats.push(&event);
-            state.events.push_back(event);
+        for line in feed::read_all_lines(&o.path).unwrap_or_default() {
+            match line {
+                FeedLine::Event(event) => {
+                    state.stats.push(&event);
+                    state.events.push_back(*event);
+                }
+                FeedLine::Observed(obs) => observe(&mut state, obs),
+            }
         }
         while state.events.len() > BACKLOG {
             state.events.pop_front();
@@ -120,8 +128,11 @@ pub fn run(o: Options) -> io::Result<()> {
 
 fn pump(out: &mut Stdout, tail: &mut Tail, state: &mut State, o: &Options) -> io::Result<()> {
     loop {
-        for event in tail.poll() {
-            ingest(state, event);
+        for line in tail.poll_lines() {
+            match line {
+                FeedLine::Event(event) => ingest(state, *event),
+                FeedLine::Observed(obs) => observe(state, obs),
+            }
         }
         draw(out, state, o)?;
 
@@ -150,6 +161,20 @@ fn ingest(state: &mut State, event: Event) {
         while state.events.len() > BACKLOG {
             state.events.pop_front();
         }
+    }
+}
+
+/// Keep an observation for its run. Bounded like the events: runs whose
+/// events have scrolled out of the backlog are forgotten.
+fn observe(state: &mut State, obs: Observation) {
+    state.observed.entry(obs.run.clone()).or_default().push(obs);
+    if state.observed.len() > BACKLOG {
+        let live: std::collections::HashSet<&str> = state
+            .events
+            .iter()
+            .filter_map(|e| e.run.as_deref())
+            .collect();
+        state.observed.retain(|run, _| live.contains(run.as_str()));
     }
 }
 
@@ -235,12 +260,23 @@ fn frame(state: &mut State, o: &Options, w: u16, h: u16, now: u64) -> String {
     export::to_ansi_screen(&buf, &THEMES[state.theme], 1)
 }
 
-/// Rows of the body, newest last: one per event that clears the filter, plus a
-/// second for the ones carrying a note worth reading. `true` marks a note row.
-fn rows(state: &State) -> Vec<(&Event, bool)> {
-    let mut rows: Vec<(&Event, bool)> = Vec::new();
+/// What a body row shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RowKind {
+    Event,
+    /// The worst note, for an event that earned a second line.
+    Note,
+    /// What an audited run actually did.
+    Observed,
+}
+
+/// Rows of the body, newest last: one per event that clears the filter, a
+/// second for the ones carrying a note worth reading, and a third when the
+/// run was audited.
+fn rows(state: &State) -> Vec<(&Event, RowKind)> {
+    let mut rows: Vec<(&Event, RowKind)> = Vec::new();
     for event in state.events.iter().filter(|e| e.band >= state.floor) {
-        rows.push((event, false));
+        rows.push((event, RowKind::Event));
         if state.notes
             && event.band >= Band::Check
             && event
@@ -248,7 +284,14 @@ fn rows(state: &State) -> Vec<(&Event, bool)> {
                 .first()
                 .is_some_and(|n| n.severity >= pyxray_core::model::Severity::Caution)
         {
-            rows.push((event, true));
+            rows.push((event, RowKind::Note));
+        }
+        if event
+            .run
+            .as_ref()
+            .is_some_and(|r| state.observed.contains_key(r))
+        {
+            rows.push((event, RowKind::Observed));
         }
     }
     rows
@@ -301,7 +344,7 @@ fn compose(state: &State, o: &Options, w: u16, h: u16, now: u64) -> ratatui::buf
     let end = total.saturating_sub(state.scroll);
     let start = end.saturating_sub(window);
 
-    for (i, (event, is_note)) in rows[start..end].iter().enumerate() {
+    for (i, (event, kind)) in rows[start..end].iter().enumerate() {
         let y = body_top + i as u16;
         let line = Rect {
             x: 1,
@@ -309,10 +352,20 @@ fn compose(state: &State, o: &Options, w: u16, h: u16, now: u64) -> ratatui::buf
             width: w.saturating_sub(2),
             height: 1,
         };
-        if *is_note {
-            feedview::note_row(&mut buf, line, event, &theme);
-        } else {
-            feedview::row(&mut buf, line, event, now, &theme, &o.opts);
+        match kind {
+            RowKind::Event => feedview::row(&mut buf, line, event, now, &theme, &o.opts),
+            RowKind::Note => {
+                feedview::note_row(&mut buf, line, event, &theme);
+            }
+            RowKind::Observed => {
+                let seen = event
+                    .run
+                    .as_ref()
+                    .and_then(|r| state.observed.get(r))
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                feedview::observed_row(&mut buf, line, &reconcile(event, seen), &theme);
+            }
         }
     }
 
@@ -407,6 +460,7 @@ mod tests {
     fn state(events: Vec<Event>) -> State {
         let mut s = State {
             events: VecDeque::new(),
+            observed: HashMap::new(),
             stats: feedview::Stats::default(),
             theme: THEMES.iter().position(|t| t.id == "mono").unwrap_or(0),
             floor: Band::Inert,
@@ -559,6 +613,46 @@ mod tests {
         });
         let out = text(&state(vec![e]), 100, 8);
         assert!(out.contains("+net") && out.contains("job.py"), "{out}");
+    }
+
+    #[test]
+    fn an_audited_run_shows_what_it_actually_did() {
+        let mut e = event("import os\nos.remove('a')\n", "job.py", 2_000);
+        e.run = Some("r1".into());
+        let mut s = state(vec![e]);
+        observe(
+            &mut s,
+            Observation {
+                kind: "observed".into(),
+                schema: 1,
+                ts: NOW,
+                run: "r1".into(),
+                pid: 1,
+                name: "job.py".into(),
+                items: vec![
+                    pyxray_core::model::ObservedItem {
+                        effect: pyxray_core::model::Effect::FsDelete,
+                        verb: "remove".into(),
+                        target: Some("a".into()),
+                        count: 1,
+                    },
+                    pyxray_core::model::ObservedItem {
+                        effect: pyxray_core::model::Effect::Net,
+                        verb: "connect".into(),
+                        target: Some("10.0.0.9:443".into()),
+                        count: 1,
+                    },
+                ],
+                truncated: false,
+            },
+        );
+        let out = text(&s, 110, 8);
+        assert!(out.contains("observed"), "{out}");
+        assert!(
+            out.contains("+ connect 10.0.0.9:443 (unpredicted)"),
+            "{out}"
+        );
+        assert!(out.contains("fs_delete"), "{out}");
     }
 
     #[test]

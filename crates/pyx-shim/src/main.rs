@@ -156,7 +156,41 @@ fn main() -> ExitCode {
     // Children started by the script (and nested pythons through this shim)
     // share the run id, so their rows belong to this one.
     std::env::set_var("PYXRAY_RUN", &run);
+    if std::env::var("PYXRAY_AUDIT").as_deref() == Ok("1") {
+        arm_audit();
+    }
     hand_over(&real, &args, stdin_buffer)
+}
+
+/// The runtime audit hook, carried inside the shim so it needs no Python
+/// package: written once per version to a temporary directory that goes first
+/// on the child's `PYTHONPATH`, where CPython imports it as `sitecustomize`.
+const AUDIT_HOOK: &str = include_str!("../../../python/pyxray_agent/_audit/sitecustomize.py");
+
+/// Have the interpreter about to start report what it actually does.
+fn arm_audit() {
+    let dir = std::env::temp_dir().join(format!(
+        "pyxray-audit-{}",
+        pyxray_core::record::digest(AUDIT_HOOK)
+    ));
+    let file = dir.join("sitecustomize.py");
+    if !file.is_file() {
+        let staged = dir.join(format!("sitecustomize.{}.tmp", std::process::id()));
+        let ok = std::fs::create_dir_all(&dir).is_ok()
+            && std::fs::write(&staged, AUDIT_HOOK).is_ok()
+            && std::fs::rename(&staged, &file).is_ok();
+        if !ok && !file.is_file() {
+            return; // nowhere to put it: run unaudited rather than not at all
+        }
+    }
+    std::env::set_var("PYXRAY_AUDIT_LOG", pyxray_core::feed::default_path());
+    let mut paths = vec![dir];
+    if let Some(existing) = std::env::var_os("PYTHONPATH") {
+        paths.extend(std::env::split_paths(&existing));
+    }
+    if let Ok(joined) = std::env::join_paths(paths) {
+        std::env::set_var("PYTHONPATH", joined);
+    }
 }
 
 /// The interpreter to run for real: a program plus any arguments that select

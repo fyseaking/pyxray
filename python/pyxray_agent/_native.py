@@ -245,7 +245,8 @@ class _Binary(Engine):
         return event, rest if kw.get("draw") else ""
 
     def feed_path(self) -> str:
-        return str(self._list().get("feed", ""))
+        # The listing is cached for the life of the engine; PYXRAY_LOG is not.
+        return os.environ.get("PYXRAY_LOG") or str(self._list().get("feed", ""))
 
     def read_feed(self, path: str | None = None) -> list[dict[str, Any]]:
         target = path or os.environ.get("PYXRAY_LOG") or self.feed_path()

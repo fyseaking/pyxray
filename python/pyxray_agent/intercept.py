@@ -57,6 +57,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import time
 from typing import Any
 
 from ._native import engine
@@ -283,6 +284,25 @@ def _source_for(argv: list[str]) -> tuple[str, str, bool]:
     return "", "<unknown>", False
 
 
+AUDIT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_audit")
+
+
+def audit_child_env(env: Any) -> None:
+    """Arrange for the interpreter about to start to report what it does.
+
+    Puts :mod:`pyxray_agent._audit`'s ``sitecustomize`` first on its
+    ``PYTHONPATH`` and tells it where the feed is; ``PYXRAY_RUN`` must already
+    be set. See ``_audit/sitecustomize.py``.
+    """
+    try:
+        log = os.environ.get("PYXRAY_LOG") or engine().feed_path()
+    except Exception:  # noqa: BLE001 — no engine: nowhere to write, so no audit
+        return
+    env["PYXRAY_AUDIT_LOG"] = log
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = AUDIT_DIR + (os.pathsep + existing if existing else "")
+
+
 def _script_of(argv: list[str]) -> str | None:
     """The script file a ``python …`` command line runs, if it runs one."""
     try:
@@ -311,15 +331,20 @@ def _run_wrapped(argv: list[str]) -> int:
     # A script is its own origin, so its local imports are followed from its
     # directory; anything else runs from here.
     script = _script_of(argv)
+    run = os.environ.get("PYXRAY_RUN") or f"{os.getpid():x}-{int(time.time() * 1000):x}"
     event = look(
         source,
         name,
         source="shim",
         origin=os.path.abspath(script) if script else None,
         cwd=os.getcwd() if not script else None,
+        run=run,
     )
     if not should_run(event):
         return 3
+    os.environ["PYXRAY_RUN"] = run
+    if os.environ.get("PYXRAY_AUDIT") == "1":
+        audit_child_env(os.environ)
     if from_stdin:
         # The script came from stdin, which we have already consumed, so hand
         # it back rather than re-reading it.

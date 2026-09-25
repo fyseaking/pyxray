@@ -59,7 +59,23 @@ function Dot ({ color }) {
   })
 }
 
-function Row ({ row, active, onPick }) {
+function ObservedChip ({ items }) {
+  if (!items || !items.length) return null
+  const label = items
+    .slice(0, 8)
+    .map(i => `${i.verb} ${i.target || ''}`.trim() + (i.count > 1 ? ` x${i.count}` : ''))
+    .join('\n')
+  return jsx(Tip, {
+    label: `what the run actually did:\n${label}`,
+    children: jsx('span', {
+      className: 'shrink-0 rounded px-1 text-[0.625rem]',
+      style: { color: 'var(--ui-text-secondary)', border: '1px solid var(--ui-stroke-secondary)' },
+      children: `observed ${items.length}`
+    })
+  })
+}
+
+function Row ({ row, active, onPick, observed }) {
   const ev = row.event || {}
   const band = bandOf(ev)
   const notes = Array.isArray(ev.notes) ? ev.notes : []
@@ -98,6 +114,7 @@ function Row ({ row, active, onPick }) {
           className: 'min-w-0 flex-1 truncate text-[0.75rem]',
           children: ev.synopsis || '—'
         }),
+        jsx(ObservedChip, { items: ev.run && observed ? observed[ev.run] : null }),
         row.tool
           ? jsx('span', {
               className: 'shrink-0 text-[0.625rem]',
@@ -184,6 +201,14 @@ function Pane ({ ctx }) {
       : ctx.rest('/events?limit=80'),
     refetchInterval: POLL_MS
   })
+  // Audited runs (the shim with PYXRAY_AUDIT=1) in the whole-feed view.
+  const observedQ = useQuery({
+    queryKey: [ctx.source, 'observed'],
+    queryFn: () => ctx.rest('/observed'),
+    enabled: scope !== 'hermes',
+    refetchInterval: POLL_MS * 2
+  })
+  const observed = (observedQ.data && observedQ.data.runs) || {}
   const list = (rows.data && rows.data.rows) || []
   // Feed rows are events themselves; recent rows wrap one under `event`.
   const items = scope === 'hermes'
@@ -240,6 +265,7 @@ function Pane ({ ctx }) {
           ? items.map((row, i) => jsx(Row, {
               row,
               active: picked === row,
+              observed,
               onPick: r => setPicked(picked === r ? null : r)
             }, `${row.ts}-${i}`))
           : jsx(EmptyState, {

@@ -809,6 +809,98 @@ pub struct Event {
     pub changed: Option<EventDiff>,
 }
 
+/// What a run actually did, as recorded by the runtime audit hook
+/// (`PYXRAY_AUDIT=1`): a second kind of feed line, joined to its predicted
+/// [`Event`] by `run`. Old readers skip it — it lacks an event's fields.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct Observation {
+    /// Always `"observed"`; how a reader tells this line from an event.
+    pub kind: String,
+    #[serde(default)]
+    pub schema: u32,
+    pub ts: u64,
+    pub run: String,
+    pub pid: u32,
+    pub name: String,
+    pub items: Vec<ObservedItem>,
+    /// More distinct effects happened than were kept.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// One kind of thing a run did, counted.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct ObservedItem {
+    pub effect: Effect,
+    pub verb: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    pub count: u32,
+}
+
+/// Predicted against observed, for one run.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Reconciled {
+    /// Predicted, and seen.
+    pub confirmed: EffectMask,
+    /// Seen, but not predicted — the interesting part.
+    pub unpredicted: Vec<ObservedItem>,
+    /// Predicted, but not seen: a branch not taken, or a path that ran
+    /// somewhere the audit hook cannot see.
+    pub unseen: EffectMask,
+}
+
+/// Compare what the analysis said a run would do with what it did.
+pub fn reconcile(event: &Event, observed: &[Observation]) -> Reconciled {
+    let predicted = EffectMask(event.mask);
+    let mut seen = EffectMask::default();
+    let mut unpredicted: Vec<ObservedItem> = Vec::new();
+    for item in observed.iter().flat_map(|o| o.items.iter()) {
+        seen.insert(item.effect);
+        if !predicted.contains(item.effect) {
+            match unpredicted
+                .iter_mut()
+                .find(|u| u.effect == item.effect && u.verb == item.verb && u.target == item.target)
+            {
+                Some(u) => u.count += item.count,
+                None => unpredicted.push(item.clone()),
+            }
+        }
+    }
+    let mut confirmed = EffectMask::default();
+    let mut unseen = EffectMask::default();
+    for e in predicted.iter() {
+        // Only effects the audit hook can see are fair to call unseen.
+        if !observable(e) {
+            continue;
+        }
+        if seen.contains(e) {
+            confirmed.insert(e);
+        } else {
+            unseen.insert(e);
+        }
+    }
+    Reconciled {
+        confirmed,
+        unpredicted,
+        unseen,
+    }
+}
+
+/// Whether Python's audit hooks report an effect at all. Environment reads,
+/// printing, randomness and the clock raise no audit events.
+pub fn observable(e: Effect) -> bool {
+    matches!(
+        e,
+        Effect::FsRead
+            | Effect::FsWrite
+            | Effect::FsDelete
+            | Effect::Net
+            | Effect::Process
+            | Effect::Dynamic
+    )
+}
+
 /// What a script can do now that its previous version could not (and the
 /// reverse). An agent that edits a script between runs changes what it does;
 /// this is the part worth a second look.
@@ -1017,5 +1109,46 @@ mod tests {
         assert_eq!(r.diagnostics.len(), 1);
         assert!(r.diagnostics[0].message.contains("boom"));
         assert!(r.effects.is_empty());
+    }
+
+    #[test]
+    fn reconcile_splits_confirmed_unpredicted_and_unseen() {
+        let event = crate::xray(
+            "import os, requests\nos.remove('a')\nrequests.get('https://x')\nprint(os.environ['HOME'])\n",
+            "t",
+        )
+        .event("t");
+        let obs = Observation {
+            kind: "observed".into(),
+            schema: SCHEMA,
+            ts: 1,
+            run: "r".into(),
+            pid: 1,
+            name: "t".into(),
+            items: vec![
+                ObservedItem {
+                    effect: Effect::FsDelete,
+                    verb: "remove".into(),
+                    target: Some("a".into()),
+                    count: 1,
+                },
+                ObservedItem {
+                    effect: Effect::Process,
+                    verb: "spawn".into(),
+                    target: Some("sh -c x".into()),
+                    count: 1,
+                },
+            ],
+            truncated: false,
+        };
+        let r = reconcile(&event, &[obs]);
+        assert!(r.confirmed.contains(Effect::FsDelete));
+        assert!(r.unseen.contains(Effect::Net), "predicted, not seen");
+        assert!(
+            !r.unseen.contains(Effect::Env),
+            "env reads are not observable, so never 'unseen'"
+        );
+        assert_eq!(r.unpredicted.len(), 1);
+        assert_eq!(r.unpredicted[0].effect, Effect::Process);
     }
 }

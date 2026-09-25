@@ -12,7 +12,7 @@
 
 use std::collections::VecDeque;
 
-use pyxray_core::model::{Band, Effect, EffectMask, Event, Severity};
+use pyxray_core::model::{Band, Effect, EffectMask, Event, Reconciled, Severity};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -200,6 +200,57 @@ pub fn row(buf: &mut Buffer, a: Rect, event: &Event, now_ms: u64, t: &Theme, o: 
     }
     tail.push((name.as_str(), t.faint()));
     canvas::segs_right_bounded(buf, x + room, a.right(), a.y, &tail);
+}
+
+/// The row under an event whose run was audited: what was predicted and
+/// seen, what happened without being predicted, what was predicted and never
+/// happened. Unpredicted effects lead — they are the reason to look.
+pub fn observed_row(buf: &mut Buffer, a: Rect, r: &Reconciled, t: &Theme) {
+    let mut x = a.x + BAR_X;
+    x += canvas::text(buf, x, a.y, 9, "observed ", t.faint());
+    let sep = t.gl.sep;
+    let mut parts: Vec<(String, Style)> = Vec::new();
+    for item in &r.unpredicted {
+        let what = match &item.target {
+            Some(target) => format!("+ {} {target}", item.verb),
+            None => format!("+ {}", item.verb),
+        };
+        let times = if item.count > 1 {
+            format!(" x{}", item.count)
+        } else {
+            String::new()
+        };
+        parts.push((
+            format!("{what}{times} (unpredicted)"),
+            Style::default()
+                .fg(t.pal.danger)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    if !r.confirmed.is_empty() {
+        let ids: Vec<&str> = r.confirmed.iter().map(|e| e.id()).collect();
+        parts.push((
+            format!("{} {}", t.gl.check, ids.join(" ")),
+            Style::default().fg(t.pal.ok),
+        ));
+    }
+    if !r.unseen.is_empty() {
+        let ids: Vec<&str> = r.unseen.iter().map(|e| e.id()).collect();
+        parts.push((format!("- {} (not seen)", ids.join(" ")), t.faint()));
+    }
+    if parts.is_empty() {
+        parts.push(("nothing the audit hook can see".into(), t.faint()));
+    }
+    for (i, (text, style)) in parts.iter().enumerate() {
+        if i > 0 {
+            x += canvas::text(buf, x, a.y, a.right().saturating_sub(x), sep, t.faint());
+        }
+        let room = a.right().saturating_sub(x);
+        if room == 0 {
+            break;
+        }
+        x += canvas::text(buf, x, a.y, room, &fit(text, room, t.gl.ellipsis), *style);
+    }
 }
 
 /// The note under a row that earned one — only ever drawn for the worst

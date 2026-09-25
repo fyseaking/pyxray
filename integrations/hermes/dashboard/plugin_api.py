@@ -93,6 +93,33 @@ async def events(limit: int = Query(60, ge=1, le=500), source: str = Query("all"
     return {"rows": rows}
 
 
+@router.get("/observed")
+async def observed(limit: int = Query(500, ge=1, le=5000)) -> dict[str, Any]:
+    """What audited runs actually did (`PYXRAY_AUDIT=1` through the shim), by
+    run id, for joining to the events that predicted them."""
+    guard = _guard()
+    try:
+        path = guard.pyxray_module().feed_path()
+    except Exception:  # noqa: BLE001
+        path = os.environ.get("PYXRAY_LOG") or guard.feed_path_fallback()
+    runs: dict[str, list[dict[str, Any]]] = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            lines = fh.readlines()[-limit * 4:]
+    except OSError:
+        return {"runs": {}}
+    for line in lines:
+        if '"observed"' not in line:
+            continue
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(row, dict) and row.get("kind") == "observed" and row.get("run"):
+            runs.setdefault(str(row["run"]), []).extend(row.get("items") or [])
+    return {"runs": dict(list(runs.items())[-limit:])}
+
+
 @router.get("/recent")
 async def recent(limit: int = Query(40, ge=1, le=200)) -> dict[str, Any]:
     """The card index: one entry per Hermes tool call that had Python in it."""

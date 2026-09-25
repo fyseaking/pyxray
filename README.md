@@ -301,6 +301,27 @@ recorded run of that path could not, the event says `+net`, the new target
 and the change in risk, `pyx watch` shows it beside the name, and the harness
 note tells the model.
 
+### Predicted, then observed
+
+Static analysis says what a script *will* do. With `PYXRAY_AUDIT=1`, the
+shim (and `python -m pyxray_agent.intercept`) also records what it *did*: a
+PEP 578 audit hook in the child reports files opened, written and deleted,
+processes started, hosts resolved and connected to, and `eval`/`pickle`/
+`ctypes` — and writes one `observed` line to the feed with the same run id as
+the prediction. `pyx watch` puts it under the event:
+
+```
+   3s ##   30 ◂▸ ...   deletes out.txt                          job.py
+               observed + connect 10.0.0.9:443 (unpredicted) · √ fs_write fs_delete
+```
+
+An *unpredicted* effect is the thing to look at: something the code did that
+reading it did not show. It is verification, not a sandbox — it observes and
+never blocks; `ctypes`, raw system calls and children that clear their
+environment get past it; environment reads raise no audit events at all. It
+costs a set lookup per audited operation and nothing on pure computation.
+Hooks never audit: they see a tool call, not a process.
+
 ### Policy
 
 One number is a blunt instrument. `.pyxray.toml` says, per effect and per

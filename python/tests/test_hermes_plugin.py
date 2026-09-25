@@ -337,3 +337,22 @@ def test_dashboard_routes_read_what_the_agent_wrote(plugin: Any) -> None:
     assert len(events) == 1
     with pytest.raises(Exception):
         asyncio.run(api.card("../etc/passwd"))
+
+
+def test_dashboard_joins_audited_runs(plugin: Any, tmp_path: Path) -> None:
+    pytest.importorskip("fastapi")
+    import asyncio
+
+    log = Path(os.environ["PYXRAY_LOG"])
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"kind": "observed", "schema": 1, "ts": 1, "run": "r9", "pid": 2, "name": "x.py",
+                             "items": [{"effect": "net", "verb": "connect", "target": "1.2.3.4:443", "count": 1}],
+                             "truncated": False}) + "\n")
+    spec = importlib.util.spec_from_file_location("pyxray_dashboard_obs", PLUGIN_DIR / "dashboard" / "plugin_api.py")
+    assert spec and spec.loader
+    api = importlib.util.module_from_spec(spec)
+    sys.modules["pyxray_dashboard_obs"] = api
+    spec.loader.exec_module(api)
+    runs = asyncio.run(api.observed(limit=10))["runs"]
+    assert runs["r9"][0]["target"] == "1.2.3.4:443"
